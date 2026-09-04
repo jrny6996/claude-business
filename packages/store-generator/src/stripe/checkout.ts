@@ -80,6 +80,7 @@ export async function provisionStripeCheckout(
 
   return {
     provider: "stripe",
+    mode: "payment_link",
     waitlistEndpoint: config.checkout.waitlistEndpoint,
     paymentLinkUrl: link.url,
     variantPaymentLinks,

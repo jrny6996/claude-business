@@ -88,11 +88,14 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
 
 ## How the cost boundary is enforced
 
-- **Stripe (BYOK).** The app creates a Stripe Payment Link at generation time
-  using the user's own secret key, on their machine. Only the resulting
-  `buy.stripe.com` URL is written into the store — there is a test asserting no
-  `sk_live`/`sk_test` string ever appears in generated output. Checkout runs on
-  Stripe's hosted page. We take no fee and see no card data.
+- **Stripe (BYOK).** Premium stores deployed to Vercel/Netlify ship their own
+  `/api/checkout` endpoint, which runs as a serverless function on the user's
+  hosting account with `STRIPE_SECRET_KEY` from that host's environment — the
+  key never reaches this app at all. Prices are read server-side from the
+  store's own data, never from the request. Static hosts fall back to Stripe
+  Payment Links created at generation time. Either way checkout runs on Stripe's
+  hosted page; we take no fee and see no card data, and a test asserts no
+  `sk_live`/`sk_test` string ever appears in generated output.
 - **OpenRouter (BYOK).** AI copy rewriting calls OpenRouter directly with the
   user's key and is billed to their account. Optional: with no key set, the store
   still generates and the API returns a warning instead of failing.

@@ -32,6 +32,10 @@ import {
   robotsTxt,
   tsconfig,
 } from "./templates/project.js";
+import {
+  checkoutApiTs,
+  checkoutSuccessAstro,
+} from "./templates/checkout-api.js";
 import { globalCss, themeCss, waitlistCss } from "./templates/styles.js";
 
 export * from "./context.js";
@@ -58,7 +62,7 @@ export function generateSite(
 
   const files: GeneratedFile[] = [
     { path: "package.json", contents: packageJson(ctx) },
-    { path: "astro.config.mjs", contents: astroConfig() },
+    { path: "astro.config.mjs", contents: astroConfig(ctx) },
     { path: "tsconfig.json", contents: tsconfig() },
     { path: ".gitignore", contents: gitignore() },
     { path: "README.md", contents: readme(ctx) },
@@ -84,6 +88,17 @@ export function generateSite(
     { path: "src/pages/returns.astro", contents: policyAstro("returns") },
     { path: "src/pages/404.astro", contents: notFoundAstro() },
   ];
+
+  // The checkout endpoint only exists where it can actually run.
+  if (ctx.hasCheckoutApi) {
+    files.push(
+      { path: "src/pages/api/checkout.ts", contents: checkoutApiTs() },
+      {
+        path: "src/pages/checkout/success.astro",
+        contents: checkoutSuccessAstro(),
+      },
+    );
+  }
 
   return { files };
 }

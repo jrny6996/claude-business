@@ -46,15 +46,33 @@ payment_ is the thing being sold.
 
 ### How Stripe checkout works (premium)
 
-- At **generation time**, the desktop app calls Stripe directly from the user's
-  machine with the user's own secret key and creates a Product, a Price and a
-  **Payment Link** (plus one extra Price/Link per available variant priced
-  differently from the base, capped at 20).
-- Only the resulting `https://buy.stripe.com/...` URL is written into the store.
-  There is a test asserting `sk_live`/`sk_test` never appears in generated
-  output.
-- Checkout happens on **Stripe's** hosted page. No money and no card data
-  touches us, and we take no cut.
+Two modes, chosen by where the store is deployed.
+
+**`api` (default, Vercel/Netlify).** The store ships its own REST endpoint at
+`src/pages/api/checkout.ts`, which runs as a serverless function **on the user's
+hosting account** and creates a Stripe Checkout Session per order.
+
+- The Stripe secret key lives in _their_ host's environment as
+  `STRIPE_SECRET_KEY`. In this mode our app never needs the key at all, and makes
+  no Stripe call at generation time.
+- **Prices are read from the store's own `store.json` on the server, never from
+  the request.** The browser may send a variant id and a quantity and nothing
+  else. Verified by intercepting the outbound call: a request claiming
+  `unitAmount: 1` and `name: "FREE WATCH"` still sent `unit_amount=13908` and the
+  catalogue's own product name. A test asserts the request interface carries no
+  money field — do not add one.
+- Supports a real multi-item cart and any number of variants.
+- The route must keep `export const prerender = false`, and the project needs the
+  matching adapter (`@astrojs/vercel` / `@astrojs/netlify`).
+
+**`payment_link` (static hosts).** Links pre-created at generation time from the
+user's key held in the app. One line item per link, variant links capped at 20. A
+static host has nowhere to run a function, so `resolveCheckout` forces this mode
+and warns.
+
+Either way checkout happens on **Stripe's** hosted page. No money and no card
+data touches us, and we take no cut. A test asserts `sk_live`/`sk_test` never
+appears in generated output.
 
 ### How the waitlist works (free)
 

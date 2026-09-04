@@ -426,13 +426,16 @@ describe("store creation", () => {
     expect(result.store.config.checkout.provider).toBe("waitlist");
   });
 
-  it("provisions Stripe checkout for a premium user with a key", async () => {
+  it("provisions Stripe payment links for a premium user with a key", async () => {
     await goPremium();
     harness.data.settings.writeSecret("stripe_secret_key", "sk_test_abcd1234");
 
     const { payload } = await harness.request("POST", "/api/stores", {
       ...baseBody,
-      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+      config: {
+        storeName: "Sound Lab",
+        checkout: { provider: "stripe", mode: "payment_link" },
+      },
     });
     const result = payload.value as {
       store: { config: { checkout: { provider: string; paymentLinkUrl: string } } };
@@ -451,7 +454,10 @@ describe("store creation", () => {
 
     const { payload } = await harness.request("POST", "/api/stores", {
       ...baseBody,
-      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+      config: {
+        storeName: "Sound Lab",
+        checkout: { provider: "stripe", mode: "payment_link" },
+      },
     });
     const result = payload.value as {
       store: { config: { checkout: { provider: string } } };
@@ -460,6 +466,74 @@ describe("store creation", () => {
 
     expect(result.warnings.map((w) => w.code)).toContain("MISSING_STRIPE_KEY");
     expect(result.store.config.checkout.provider).toBe("waitlist");
+  });
+
+  it("gives a premium API-mode store an endpoint without calling Stripe", async () => {
+    await goPremium();
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: {
+        storeName: "Sound Lab",
+        deployTarget: "vercel",
+        checkout: { provider: "stripe", mode: "api" },
+      },
+    });
+    const result = payload.value as {
+      store: { config: { checkout: { provider: string; mode: string } }; outputDir: string };
+      warnings: unknown[];
+    };
+
+    // API mode needs no Stripe call from us: the store's own function creates
+    // the session with the key in the user's hosting environment.
+    expect(result.store.config.checkout.mode).toBe("api");
+    expect(result.store.config.checkout.provider).toBe("stripe");
+    expect(result.warnings).toEqual([]);
+    expect(existsSync(join(result.store.outputDir, "src/pages/api/checkout.ts"))).toBe(
+      true,
+    );
+  });
+
+  it("falls back to payment links when a static host can't run an endpoint", async () => {
+    await goPremium();
+    harness.data.settings.writeSecret("stripe_secret_key", "sk_test_abcd1234");
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: {
+        storeName: "Sound Lab",
+        deployTarget: "static",
+        checkout: { provider: "stripe", mode: "api" },
+      },
+    });
+    const result = payload.value as {
+      store: { config: { checkout: { mode: string } } };
+      warnings: { message: string }[];
+    };
+
+    expect(result.store.config.checkout.mode).toBe("payment_link");
+    expect(result.warnings.map((w) => w.message).join(" ")).toMatch(
+      /static host can't run a checkout endpoint/i,
+    );
+  });
+
+  it("still gives a free API-mode store a waitlist", async () => {
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: {
+        storeName: "Sound Lab",
+        deployTarget: "vercel",
+        checkout: { provider: "stripe", mode: "api" },
+      },
+    });
+    const result = payload.value as {
+      store: { config: { checkout: { provider: string } }; outputDir: string };
+    };
+
+    expect(result.store.config.checkout.provider).toBe("waitlist");
+    expect(existsSync(join(result.store.outputDir, "src/pages/api/checkout.ts"))).toBe(
+      false,
+    );
   });
 
   it("does not upgrade a free store to checkout on regenerate", async () => {

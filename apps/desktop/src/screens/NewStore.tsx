@@ -27,6 +27,10 @@ export function NewStore({ onCreated }: { onCreated: () => void }) {
   const [markup, setMarkup] = useState("2.5");
   const [useAiCopy, setUseAiCopy] = useState(false);
   const [enableCheckout, setEnableCheckout] = useState(true);
+  const [deployTarget, setDeployTarget] = useState<"vercel" | "netlify" | "static">(
+    "vercel",
+  );
+  const [waitlistEndpoint, setWaitlistEndpoint] = useState("");
   const [challenge, setChallenge] = useState<{ kind: string } | null>(null);
 
   // AliExpress renders listings client-side and sometimes puts a human check in
@@ -64,12 +68,18 @@ export function NewStore({ onCreated }: { onCreated: () => void }) {
           tagline,
           supportEmail: supportEmail.trim() || null,
           theme: { accentColor, preset, fontStack: "system" },
+          deployTarget,
           pricing: {
             markupMultiplier: Number.parseFloat(markup) || 2.5,
             charmPricing: true,
             currency: "USD",
           },
-          checkout: { provider: enableCheckout ? "stripe" : "none" },
+          checkout: {
+            provider: enableCheckout ? "stripe" : "waitlist",
+            // A static host can't run a function, so those stores use links.
+            mode: deployTarget === "static" ? "payment_link" : "api",
+            waitlistEndpoint: waitlistEndpoint.trim() || null,
+          },
         },
       })) as CreateResult;
 
@@ -232,6 +242,46 @@ export function NewStore({ onCreated }: { onCreated: () => void }) {
               />
             </Field>
 
+            <Field
+              label="Deploy to"
+              htmlFor="store-target"
+              hint={
+                deployTarget === "static"
+                  ? "Static hosts can't run a checkout endpoint — those stores use Stripe payment links."
+                  : "The store ships a /api/checkout function that runs on your account."
+              }
+            >
+              <select
+                id="store-target"
+                className="input"
+                value={deployTarget}
+                onChange={(event) =>
+                  setDeployTarget(
+                    event.target.value as "vercel" | "netlify" | "static",
+                  )
+                }
+              >
+                <option value="vercel">Vercel</option>
+                <option value="netlify">Netlify</option>
+                <option value="static">Any static host</option>
+              </select>
+            </Field>
+
+            <Field
+              label="Waitlist endpoint"
+              htmlFor="store-waitlist"
+              hint="Optional. Where waitlist emails post — your Formspree, Buttondown or own webhook. Falls back to your support email."
+            >
+              <input
+                id="store-waitlist"
+                className="input"
+                type="url"
+                placeholder="https://formspree.io/f/…"
+                value={waitlistEndpoint}
+                onChange={(event) => setWaitlistEndpoint(event.target.value)}
+              />
+            </Field>
+
             <Field label="Storefront style" htmlFor="store-preset">
               <select
                 id="store-preset"
@@ -258,7 +308,7 @@ export function NewStore({ onCreated }: { onCreated: () => void }) {
                 onChange={(event) => setEnableCheckout(event.target.checked)}
               />
               <span className="dot" />
-              Set up Stripe checkout with my own Stripe key
+              Take payment with Stripe (premium) — otherwise capture a waitlist
             </label>
 
             <label className="radio">

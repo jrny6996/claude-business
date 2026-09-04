@@ -159,6 +159,9 @@ describe("generateSite", () => {
     const data = JSON.parse(fileMap().get("src/data/store.json")!);
     expect(data.checkout).toEqual({
       provider: "stripe",
+      mode: "api",
+      // No adapter on the default static target, so no runtime endpoint.
+      hasApi: false,
       paymentLinkUrl: "https://buy.stripe.com/test_base",
       variantPaymentLinks: { "12002": "https://buy.stripe.com/test_white" },
       waitlistEndpoint: null,
@@ -192,6 +195,81 @@ describe("generateSite", () => {
     // A store that can't take an order must not advertise a cart.
     expect(files.get("src/components/Header.astro")).toContain("showCart");
     expect(files.get("src/components/BuyBox.astro")).toContain("isWaitlist");
+  });
+
+  it("ships a checkout endpoint and adapter for an API-mode store", () => {
+    const apiStore = StoreConfigSchema.parse({
+      storeName: "Sound Lab",
+      deployTarget: "vercel",
+      checkout: { provider: "stripe", mode: "api" },
+    });
+    const files = new Map(
+      generateSite(apiStore, product, { now }).files.map((f) => [f.path, f.contents]),
+    );
+
+    expect(files.has("src/pages/api/checkout.ts")).toBe(true);
+    expect(files.has("src/pages/checkout/success.astro")).toBe(true);
+    expect(JSON.parse(files.get("package.json")!).dependencies).toHaveProperty(
+      "@astrojs/vercel",
+    );
+    expect(files.get("astro.config.mjs")).toContain("@astrojs/vercel");
+    // The route must opt out of prerendering or it can never run.
+    expect(files.get("src/pages/api/checkout.ts")).toContain(
+      "export const prerender = false",
+    );
+  });
+
+  it("uses the Netlify adapter when that is the target", () => {
+    const netlify = StoreConfigSchema.parse({
+      storeName: "Sound Lab",
+      deployTarget: "netlify",
+      checkout: { provider: "stripe", mode: "api" },
+    });
+    const files = new Map(
+      generateSite(netlify, product, { now }).files.map((f) => [f.path, f.contents]),
+    );
+    expect(files.get("astro.config.mjs")).toContain("@astrojs/netlify");
+  });
+
+  it("ships no endpoint for a static host, which cannot run one", () => {
+    const staticStore = StoreConfigSchema.parse({
+      storeName: "Sound Lab",
+      deployTarget: "static",
+      checkout: { provider: "stripe", mode: "api" },
+    });
+    const files = new Map(
+      generateSite(staticStore, product, { now }).files.map((f) => [f.path, f.contents]),
+    );
+
+    expect(files.has("src/pages/api/checkout.ts")).toBe(false);
+    expect(files.get("astro.config.mjs")).not.toContain("adapter");
+    expect(JSON.parse(files.get("package.json")!).dependencies).not.toHaveProperty(
+      "@astrojs/vercel",
+    );
+  });
+
+  it("never lets the checkout endpoint take a price from the request", () => {
+    const apiStore = StoreConfigSchema.parse({
+      storeName: "Sound Lab",
+      deployTarget: "vercel",
+      checkout: { provider: "stripe", mode: "api" },
+    });
+    const endpoint = generateSite(apiStore, product, { now }).files.find(
+      (f) => f.path === "src/pages/api/checkout.ts",
+    )!.contents;
+
+    // Prices come from the store's own data island.
+    expect(endpoint).toContain("store.product.priceCents");
+    expect(endpoint).toContain("variant.priceCents");
+    expect(endpoint).toContain("STRIPE_SECRET_KEY");
+
+    // The shape accepted from the browser carries no money at all — that is
+    // the property that stops a storefront being bought for a penny.
+    const requestShape = /interface LineItemRequest \{([\s\S]*?)\}/.exec(endpoint)?.[1];
+    expect(requestShape).toBeDefined();
+    expect(requestShape).toContain("variantId");
+    expect(requestShape).toContain("quantity");
+    expect(requestShape).not.toMatch(/amount|price|total|currency/i);
   });
 
   it("degrades to a disabled checkout when no payment link exists", () => {

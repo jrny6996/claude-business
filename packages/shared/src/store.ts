@@ -49,6 +49,18 @@ export const CheckoutConfigSchema = z
      */
     provider: z.enum(["stripe", "waitlist", "none"]).default("waitlist"),
     /**
+     * How a Stripe store takes payment.
+     *
+     * - `api` — the store ships a `/api/checkout` endpoint that creates a
+     *   Checkout Session on demand. It runs as a serverless function on the
+     *   **user's own** Vercel/Netlify with their `STRIPE_SECRET_KEY` in that
+     *   host's environment, so the key never reaches us at all. Supports a real
+     *   multi-item cart and any number of variants.
+     * - `payment_link` — links pre-created at generation time. The only option
+     *   for a purely static host, since there is nowhere to run a function.
+     */
+    mode: z.enum(["api", "payment_link"]).default("api"),
+    /**
      * Where the waitlist form posts. The user's own form endpoint (Formspree,
      * Buttondown, their own webhook) — we never receive these addresses, and a
      * static store has nowhere to put them otherwise. With none set the form
@@ -73,6 +85,14 @@ export const StoreConfigSchema = z.object({
   theme: ThemeSchema.prefault({}),
   pricing: RetailPricingSchema,
   checkout: CheckoutConfigSchema,
+  /**
+   * Where the user intends to deploy.
+   *
+   * This decides whether the generated project can carry a checkout API at
+   * all: `static` has nowhere to run one, so those stores fall back to payment
+   * links. It also picks the Astro adapter baked into the project.
+   */
+  deployTarget: z.enum(["vercel", "netlify", "static"]).default("static"),
   /** Free-text shipping/returns copy rendered into the storefront. */
   shippingPolicy: z.string().default(""),
   returnsPolicy: z.string().default(""),

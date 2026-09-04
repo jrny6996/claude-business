@@ -7,7 +7,9 @@ import Rating from "./Rating.astro";
 import Waitlist from "./Waitlist.astro";
 
 const { product, checkout } = store;
-const isStripe = checkout.provider === "stripe" && Boolean(checkout.paymentLinkUrl);
+const isStripe =
+  checkout.provider === "stripe" &&
+  (checkout.hasApi || Boolean(checkout.paymentLinkUrl));
 const isWaitlist = checkout.provider === "waitlist";
 const optionNames = [
   ...new Set(product.variants.flatMap((variant) => Object.keys(variant.options))),
@@ -66,9 +68,15 @@ const optionNames = [
 
     {isStripe && (
       <>
-        <a class="btn btn-primary" data-buy-now href={checkout.paymentLinkUrl}>
-          Buy now
-        </a>
+        {checkout.hasApi ? (
+          <button class="btn btn-primary" type="button" data-buy-now data-checkout-api>
+            Buy now
+          </button>
+        ) : (
+          <a class="btn btn-primary" data-buy-now href={checkout.paymentLinkUrl}>
+            Buy now
+          </a>
+        )}
         <p style="height: 8px"></p>
         <button class="btn btn-secondary" type="button" data-add-to-cart>
           Add to cart
@@ -77,6 +85,7 @@ const optionNames = [
           Secure checkout is hosted by Stripe. You'll be redirected to complete
           your purchase.
         </p>
+        <p class="checkout-note" data-checkout-error role="alert"></p>
       </>
     )}
 
@@ -99,7 +108,7 @@ const optionNames = [
 </div>
 
 <script>
-  import { addToCart, selectedVariant, paymentLinkFor } from "../lib/cart";
+  import { addToCart, selectedVariant, paymentLinkFor, startCheckout } from "../lib/cart";
 
   const root = document.getElementById("buy-controls");
   if (root) {
@@ -123,6 +132,9 @@ const optionNames = [
 
       const link = paymentLinkFor(root, variant);
       if (buyNow instanceof HTMLAnchorElement && link) buyNow.href = link;
+      if (buyNow instanceof HTMLButtonElement) {
+        buyNow.dataset.variantId = variant ? variant.id : "";
+      }
 
       // Waitlist stores record which variant the visitor was looking at.
       const hidden = document.querySelector("[data-waitlist-variant]");
@@ -146,6 +158,32 @@ const optionNames = [
       addToCart(root, readOptions(), quantity);
       window.location.href = "/cart/";
     });
+
+    // API checkout: the server prices the order, so the browser only ever says
+    // which variant and how many.
+    if (buyNow instanceof HTMLButtonElement && buyNow.dataset.checkoutApi !== undefined) {
+      buyNow.addEventListener("click", async () => {
+        const quantity =
+          quantityInput instanceof HTMLInputElement
+            ? Math.max(1, Number.parseInt(quantityInput.value, 10) || 1)
+            : 1;
+
+        buyNow.disabled = true;
+        const original = buyNow.textContent;
+        buyNow.textContent = "Starting checkout\u2026";
+
+        try {
+          await startCheckout([
+            { variantId: buyNow.dataset.variantId || null, quantity },
+          ]);
+        } catch (error) {
+          buyNow.disabled = false;
+          buyNow.textContent = original;
+          const note = document.querySelector("[data-checkout-error]");
+          if (note) note.textContent = error instanceof Error ? error.message : "";
+        }
+      });
+    }
 
     sync();
   }
@@ -257,6 +295,8 @@ export function cartLibTs(): string {
 
 export interface CartItem {
   productId: string;
+  /** Which variant, so the checkout API can price the line itself. */
+  variantId: string | null;
   title: string;
   image: string;
   options: Record<string, string>;
@@ -349,6 +389,7 @@ export function addToCart(
   } else {
     items.push({
       productId,
+      variantId: variant ? variant.id : null,
       title: root.getAttribute("data-product-title") ?? "Product",
       image: root.getAttribute("data-product-image") ?? "",
       options,
@@ -370,6 +411,32 @@ export function removeFromCart(index: number): void {
 
 export function clearCart(): void {
   writeCart([]);
+}
+
+/**
+ * Starts a Stripe Checkout Session through this store's own API route.
+ *
+ * Only variant ids and quantities are sent: the endpoint reads prices from the
+ * store's own data, so a tampered request can't change what anything costs.
+ */
+export async function startCheckout(
+  items: { variantId: string | null; quantity: number }[],
+): Promise<void> {
+  const response = await fetch("/api/checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+
+  const body = (await response.json().catch(() => null)) as
+    | { url?: string; error?: string }
+    | null;
+
+  if (!response.ok || !body?.url) {
+    throw new Error(body?.error ?? "Couldn't start checkout. Please try again.");
+  }
+
+  window.location.href = body.url;
 }
 `;
 }

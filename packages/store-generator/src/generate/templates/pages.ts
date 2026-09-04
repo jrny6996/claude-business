@@ -49,6 +49,7 @@ import Layout from "../layouts/Layout.astro";
         <span data-cart-total></span>
       </div>
       <a class="btn btn-primary" id="cart-checkout" href="#">Checkout</a>
+      <p class="checkout-note" data-checkout-error role="alert"></p>
       <p class="checkout-note">
         Checkout is hosted by Stripe. Quantities can be adjusted on the Stripe
         page before you pay.
@@ -58,7 +59,7 @@ import Layout from "../layouts/Layout.astro";
 </Layout>
 
 <script>
-  import { readCart, removeFromCart, cartTotalCents } from "../lib/cart";
+  import { readCart, removeFromCart, cartTotalCents, startCheckout } from "../lib/cart";
   import store from "../data/store.json";
 
   const lines = document.getElementById("cart-lines");
@@ -129,11 +130,15 @@ import Layout from "../layouts/Layout.astro";
     const total = document.querySelector("[data-cart-total]");
     if (total) total.textContent = money(cartTotalCents());
 
-    // Payment links check out one line item at a time, so the button follows
-    // the first item in the cart. A multi-line cart is out of scope for a
-    // single-product validation store.
-    const first = items[0];
-    if (checkout instanceof HTMLAnchorElement) {
+    // With the checkout API the whole cart goes to Stripe as real line items.
+    // Payment links can only carry one, so those fall back to the first item.
+    if (store.checkout.hasApi) {
+      if (checkout instanceof HTMLAnchorElement) {
+        checkout.removeAttribute("href");
+        checkout.removeAttribute("aria-disabled");
+      }
+    } else if (checkout instanceof HTMLAnchorElement) {
+      const first = items[0];
       const link = first?.paymentLink || store.checkout.paymentLinkUrl || "";
       if (link) {
         checkout.href = link;
@@ -144,6 +149,29 @@ import Layout from "../layouts/Layout.astro";
       }
     }
   };
+
+  checkout?.addEventListener("click", async (event) => {
+    if (!store.checkout.hasApi) return;
+    event.preventDefault();
+
+    const items = readCart().map((item) => ({
+      variantId: item.variantId ?? null,
+      quantity: item.quantity,
+    }));
+    if (items.length === 0) return;
+
+    const note = document.querySelector("[data-checkout-error]");
+    if (note) note.textContent = "";
+
+    try {
+      await startCheckout(items);
+    } catch (error) {
+      if (note) {
+        note.textContent =
+          error instanceof Error ? error.message : "Couldn't start checkout.";
+      }
+    }
+  });
 
   render();
   window.addEventListener("cart:changed", render);

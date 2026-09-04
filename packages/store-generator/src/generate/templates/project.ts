@@ -3,7 +3,20 @@ import type { SiteContext } from "../context.js";
 /** Astro version the generated storefront is pinned to. */
 export const ASTRO_VERSION = "^7.3.1";
 
+const ADAPTERS: Record<string, { pkg: string; version: string }> = {
+  vercel: { pkg: "@astrojs/vercel", version: "^11.0.10" },
+  netlify: { pkg: "@astrojs/netlify", version: "^8.2.5" },
+};
+
+/** The adapter a store needs, or null for a purely static build. */
+export function adapterFor(ctx: SiteContext): { pkg: string; version: string } | null {
+  if (!ctx.hasCheckoutApi) return null;
+  return ADAPTERS[ctx.config.deployTarget] ?? null;
+}
+
 export function packageJson(ctx: SiteContext): string {
+  const adapter = adapterFor(ctx);
+
   return (
     JSON.stringify(
       {
@@ -16,7 +29,10 @@ export function packageJson(ctx: SiteContext): string {
           build: "astro build",
           preview: "astro preview",
         },
-        dependencies: { astro: ASTRO_VERSION },
+        dependencies: {
+          astro: ASTRO_VERSION,
+          ...(adapter ? { [adapter.pkg]: adapter.version } : {}),
+        },
       },
       null,
       2,
@@ -24,13 +40,34 @@ export function packageJson(ctx: SiteContext): string {
   );
 }
 
-export function astroConfig(): string {
-  return `import { defineConfig } from "astro/config";
+export function astroConfig(ctx: SiteContext): string {
+  const adapter = adapterFor(ctx);
+
+  if (!adapter) {
+    return `import { defineConfig } from "astro/config";
 
 // Static output: the whole storefront is prerendered to plain files, so it can
 // be dropped on any host. There is no server runtime to pay for.
 export default defineConfig({
   output: "static",
+  build: {
+    format: "directory",
+  },
+});
+`;
+  }
+
+  const importName = ctx.config.deployTarget === "vercel" ? "vercel" : "netlify";
+
+  return `import { defineConfig } from "astro/config";
+import ${importName} from "${adapter.pkg}";
+
+// Every page is still prerendered to static files. The one exception is
+// src/pages/api/checkout.ts, which opts out with \`export const prerender = false\`
+// and runs as a serverless function on your own hosting account.
+export default defineConfig({
+  output: "static",
+  adapter: ${importName}(),
   build: {
     format: "directory",
   },
@@ -106,9 +143,7 @@ This store is yours. Deploy it to your own hosting account:
 
 ## Before you take orders
 
-The checkout page is a stub. It collects an order intent and does nothing else:
-**no payment provider is wired up**. Connect your own (Stripe, PayPal, Shopify
-Buy Button, etc.) before pointing real traffic at this store.
+${checkoutInstructions(ctx)}
 
 ## Product data
 
@@ -118,4 +153,50 @@ product details.
 
 Source listing: ${ctx.product.sourceUrl}
 `;
+}
+
+/** Deploy-time instructions, which differ a lot by checkout mode. */
+function checkoutInstructions(ctx: SiteContext): string {
+  if (ctx.hasCheckoutApi) {
+    return `This store has its own checkout endpoint at \`/api/checkout\`. It runs as a
+serverless function on **your** hosting account and creates a Stripe Checkout
+Session per order.
+
+**Set your Stripe secret key in your hosting environment before going live:**
+
+\`\`\`
+STRIPE_SECRET_KEY=sk_live_...
+\`\`\`
+
+- Vercel: Project → Settings → Environment Variables
+- Netlify: Site configuration → Environment variables
+
+The key is read only by your own function. It is not in this repository, and the
+app that generated this store never had it. Prices are read from
+\`src/data/store.json\` on the server, never from the browser, so a tampered
+request can't change what anything costs.
+
+Until the key is set, checkout returns a 503 and the store explains that
+checkout isn't configured.`;
+  }
+
+  if (ctx.config.checkout.provider === "waitlist") {
+    return `This store captures a **waitlist** rather than taking payment. The form posts
+to the endpoint configured when it was generated, or falls back to your support
+email.
+
+To take payment instead, upgrade to premium and regenerate the store.`;
+  }
+
+  if (ctx.config.checkout.paymentLinkUrl) {
+    return `Checkout uses a **Stripe Payment Link** created against your account when this
+store was generated. It works as-is — no environment variables needed.
+
+Payment links carry one line item, so the cart checks out the first item. If you
+want a true multi-item cart, regenerate the store targeting Vercel or Netlify to
+get the \`/api/checkout\` endpoint instead.`;
+  }
+
+  return `**No payment provider is wired up.** Connect your own (Stripe, PayPal, Shopify
+Buy Button, etc.) before pointing real traffic at this store.`;
 }

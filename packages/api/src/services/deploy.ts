@@ -22,6 +22,8 @@ export interface DeployInstructions {
   /** Env var the token must be provided as. */
   tokenEnvVar: string;
   tokenPresent: boolean;
+  /** True when the store ships a checkout function needing a Stripe key. */
+  needsStripeEnv: boolean;
   notes: string[];
 }
 
@@ -48,25 +50,32 @@ export function getDeployInstructions(
     provider === "vercel" ? "deploy_token_vercel" : "deploy_token_netlify",
   ).present;
 
+  const needsStripeEnv =
+    store.config.checkout.provider === "stripe" &&
+    store.config.checkout.mode === "api" &&
+    store.config.deployTarget !== "static";
+
   return {
     provider,
     projectDir: store.outputDir,
+    needsStripeEnv,
     command:
       provider === "vercel"
         ? "npx vercel deploy --prod --yes"
         : "npx netlify deploy --prod --dir dist",
     tokenEnvVar: TOKEN_ENV[provider],
     tokenPresent,
-    notes:
+    notes: [
+      "Run npm install and npm run build in the project folder first.",
       provider === "vercel"
+        ? "Vercel detects Astro automatically; no extra configuration needed."
+        : "Netlify deploys the built output.",
+      ...(needsStripeEnv
         ? [
-            "Run npm install and npm run build in the project folder first.",
-            "Vercel detects Astro automatically; no extra configuration needed.",
+            `Set STRIPE_SECRET_KEY in your ${provider} project's environment variables — the checkout function reads it there. Without it, checkout returns a 503.`,
           ]
-        : [
-            "Run npm install and npm run build in the project folder first.",
-            "Netlify deploys the built dist/ directory.",
-          ],
+        : []),
+    ],
   };
 }
 

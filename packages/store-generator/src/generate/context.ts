@@ -22,6 +22,11 @@ export interface SiteContext {
   retailPriceCents: number;
   compareAtPriceCents: number | null;
   currency: string;
+  /**
+   * Whether the project ships a runtime checkout endpoint. Needs both a Stripe
+   * store in `api` mode and a host that can run a function.
+   */
+  hasCheckoutApi: boolean;
 }
 
 export function buildContext(
@@ -50,6 +55,10 @@ export function buildContext(
     config,
     product,
     packageName: slugify(config.storeName) || "storefront",
+    hasCheckoutApi:
+      config.checkout.provider === "stripe" &&
+      config.checkout.mode === "api" &&
+      config.deployTarget !== "static",
     retailPriceCents,
     compareAtPriceCents:
       compareAtPriceCents !== null && compareAtPriceCents > retailPriceCents
@@ -119,6 +128,8 @@ export function buildStoreData(
     },
     checkout: {
       provider: ctx.config.checkout.provider,
+      mode: ctx.config.checkout.mode,
+      hasApi: ctx.hasCheckoutApi,
       paymentLinkUrl: ctx.config.checkout.paymentLinkUrl,
       variantPaymentLinks: ctx.config.checkout.variantPaymentLinks,
       waitlistEndpoint: ctx.config.checkout.waitlistEndpoint,

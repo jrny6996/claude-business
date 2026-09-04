@@ -312,6 +312,22 @@ async function resolveCheckout(
 
   if (config.checkout.provider !== "stripe") return { config };
 
+  // API mode needs no Stripe call from us at all: the store's own endpoint
+  // creates the session at request time using the key in the user's hosting
+  // environment. That is strictly better — the secret never touches this app,
+  // there's no per-variant link cap, and the cart can be multi-item.
+  if (config.checkout.mode === "api") {
+    if (config.deployTarget === "static") {
+      warnings.push({
+        code: "VALIDATION_FAILED",
+        message:
+          "A static host can't run a checkout endpoint. Pick Vercel or Netlify, or switch to payment links.",
+      });
+      return { config: { ...config, checkout: { ...config.checkout, mode: "payment_link" } } };
+    }
+    return { config };
+  }
+
   const secretKey = ctx.data.settings.readSecret("stripe_secret_key");
   if (!secretKey) {
     warnings.push({
