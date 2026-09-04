@@ -168,6 +168,21 @@ Non-obvious things that cost real debugging time:
 - Page state lives under `window.runParams`, `window._pdp_cache_` **or**
   `window._d_c_` depending on rollout, and sometimes only in the DOM. All four
   are tried, best-source-first, and merged.
+- **PDP class names are content-hashed** — `price-default--current--F8OlYIo`,
+  `reviewer--rating--xrWWFzx`. Match the stable middle segment
+  (`[class*="price-default--current"]`), never a guessed prefix: an earlier
+  version matched `price--current`, which silently matches nothing, so every
+  scrape failed with "no product data" while the title was being read fine.
+  `packages/store-generator/src/scrape/dom-product.test.ts` pins these against
+  markup captured from a real listing — update it from a real page, not by
+  guessing.
+- Image URLs carry a resize suffix _and_ a format hint
+  (`….jpg_220x220q75.jpg_.avif`); both come off to reach the original.
+- Variant prices are not in the DOM (only the selected one renders), so
+  DOM-derived variants inherit the headline price rather than inventing one.
+- Anything injected into the page via `executeJavaScript` lives in a **template
+  literal**: a regex written `/\s+/` there silently becomes `/s+/`. Write
+  `/\\s+/`. ESLint's `no-useless-escape` catches this — don't silence it.
 - The `.com` → `.us` gateway rewrites the item id. `sourceId` comes from the
   pasted URL, not the final one.
 - Don't serialise the whole DOM on every poll tick — pages are ~75-90KB and the

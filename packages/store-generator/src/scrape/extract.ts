@@ -216,7 +216,13 @@ export function detectCurrency(input: string): string | undefined {
   return undefined;
 }
 
-/** Normalises AliExpress's protocol-relative and resized CDN image URLs. */
+/**
+ * Normalises AliExpress's protocol-relative and resized CDN image URLs.
+ *
+ * Live URLs look like
+ * `…/S23af1b….jpg_220x220q75.jpg_.avif` — a resize suffix *and* a format hint,
+ * both of which have to come off to get back to the full-size original.
+ */
 export function normalizeImageUrl(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -224,6 +230,6 @@ export function normalizeImageUrl(raw: string): string | null {
   const absolute = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
   if (!/^https?:\/\//i.test(absolute)) return null;
 
-  // Drop AliExpress's `_640x640.jpg`-style resize suffix to get the original.
-  return absolute.replace(/_\d+x\d+(q\d+)?\.(jpg|jpeg|png|webp)$/i, "");
+  const withoutFormatHint = absolute.replace(/_\.(avif|webp)$/i, "");
+  return withoutFormatHint.replace(/_\d+x\d+(q\d+)?\.(jpg|jpeg|png|webp)$/i, "");
 }

@@ -39,6 +39,13 @@ export interface DomProduct {
   ratingCountText?: string | null;
   shipsFrom?: string | null;
   description?: string | null;
+  highlights?: string[];
+  /**
+   * Variants read off the SKU picker. The rendered page only ever shows the
+   * selected variant's price, so these carry options and availability and
+   * inherit the headline price.
+   */
+  variants?: { id: string; options: Record<string, string>; available: boolean }[];
 }
 
 export interface PageSource {

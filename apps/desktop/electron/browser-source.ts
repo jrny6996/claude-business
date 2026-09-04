@@ -63,9 +63,13 @@ const USER_AGENT =
  */
 const PROBE = `(() => {
   const pick = (o, ...p) => p.reduce((a, k) => (a == null ? a : a[k]), o);
-  const text = (sel) => {
-    const el = document.querySelector(sel);
-    return el && el.textContent ? el.textContent.trim() : null;
+  const text = (...sels) => {
+    for (const sel of sels) {
+      const el = document.querySelector(sel);
+      const value = el && el.textContent ? el.textContent.trim() : "";
+      if (value) return value;
+    }
+    return null;
   };
 
   // AliExpress exposes page state under more than one global depending on the
@@ -81,40 +85,76 @@ const PROBE = `(() => {
     if (found) { raw = data; subject = found; break; }
   }
 
-  // The rendered DOM is the last resort, and the only source that is true
-  // whenever a human can actually see the product.
+  // The rendered DOM is the source that is true whenever a human can see the
+  // product. Class names are content-hashed (price-default--current--F8OlYIo),
+  // so match on the stable middle segment, not a guessed prefix.
   const domTitle = (() => {
-    const t = text('[data-pl="product-title"]') || text('h1[class*="title"]');
+    const t = text('[data-pl="product-title"]', 'h1[class*="title--"]');
     if (t && t.length > 8 && !/^aliexpress$/i.test(t)) return t;
-    const h1 = text("h1");
-    return h1 && h1.length > 8 && !/^aliexpress$/i.test(h1) ? h1 : null;
+    return null;
   })();
+
+  const priceText = text(
+    '[class*="price-default--current"]',
+    '[class*="--currentPrice--"]',
+    '[class*="product-price-value"]',
+    '[data-pl="product-price"]'
+  );
+
+  const skuVariants = [];
+  for (const group of document.querySelectorAll('[class*="sku-item--property"]')) {
+    const label = group.querySelector('[class*="sku-item--title"]');
+    const name = label && label.textContent
+      ? label.textContent.replace(/[:：].*$/, "").trim()
+      : null;
+    if (!name) continue;
+
+    for (const cell of group.querySelectorAll("[data-sku-col]")) {
+      const id = cell.getAttribute("data-sku-col");
+      if (!id) continue;
+      const img = cell.querySelector("img");
+      const value =
+        (img && img.getAttribute("alt")) ||
+        (cell.textContent ? cell.textContent.trim() : "");
+      if (!value) continue;
+      const cls = cell.getAttribute("class") || "";
+      skuVariants.push({
+        id,
+        options: { [name]: value },
+        available: !/soldOut/i.test(cls),
+      });
+    }
+  }
 
   const domProduct = {
     title: domTitle,
-    priceText:
-      text('[class*="price--current"]') ||
-      text('[data-pl="product-price"]') ||
-      text('[class*="product-price-value"]'),
-    compareAtText:
-      text('[class*="price--original"]') || text('[class*="price-original"]'),
-    ratingText: text('[class*="reviewer--rating"]') || text('[class*="rating--"]'),
+    priceText,
+    compareAtText: text('[class*="price-default--original"]', '[class*="--originalPrice--"]'),
+    ratingText: text('[class*="reviewer--rating"]'),
     ratingCountText: text('[class*="reviewer--reviews"]'),
-    shipsFrom: text('[class*="dynamic-shipping-line"]'),
+    shipsFrom: text('[class*="dynamic-shipping-titleLayout"]', '[class*="dynamic-shipping-line"]'),
+    highlights: [...document.querySelectorAll('[class*="seo-sellpoints--sellerPoint"] li')]
+      .map((li) => (li.textContent || "").replace(/\\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(0, 6),
+    variants: skuVariants.slice(0, 40),
     images: [...document.querySelectorAll('[class*="slider--img"] img, [class*="image-view"] img')]
       .map((img) => img.getAttribute("src") || "")
       .filter(Boolean)
-      .slice(0, 10),
+      .slice(0, 12),
   };
 
-  const ready = Boolean(subject || (domTitle && domProduct.priceText));
+  const ready = Boolean(subject || (domTitle && priceText));
 
   if (!ready) {
+    // domProduct is still reported (without the DOM) purely so a timeout can
+    // say which fields were missing. It is never used as a result: readiness is
+    // gated on \`subject\`.
     return {
       url: location.href,
       subject: null,
       pageData: null,
-      domProduct: null,
+      domProduct: domProduct,
       html: "",
       challengeInBody: /x5secdata|_____tmd_____|Slide to verify|nc_wrapper/i.test(
         document.body ? document.body.innerHTML.slice(0, 20000) : ""
@@ -209,6 +249,10 @@ export function createBrowserPageSource({
     // "this listing has no product on it".
     let seenChallenge: ChallengeKind | null = null;
     let renavigations = 0;
+    // Kept so a timeout can say what it actually saw. "No product data" with no
+    // further detail leaves nobody any way to tell a soft block from a layout
+    // change from a dead listing.
+    let lastProbe: ProbeResult | undefined;
 
     try {
       // A challenge redirect makes loadURL reject; the polling below is what
@@ -237,6 +281,7 @@ export function createBrowserPageSource({
           // Mid-navigation; try again on the next tick.
           continue;
         }
+        lastProbe = probe;
 
         if (probe.subject) {
           if (windowVisible && !target.isDestroyed()) {
@@ -289,8 +334,8 @@ export function createBrowserPageSource({
               )
             : new AppError(
                 "PARSE_FAILED",
-                "That product page loaded but never showed a product. The listing may have been removed or be unavailable in your region.",
-                "no product data after render",
+                "That product page loaded but never showed a product. The listing may have been removed, be unavailable in your region, or AliExpress may be quietly serving this machine an empty page.",
+                describeEmptyPage(lastProbe),
               );
         }
       }
@@ -323,3 +368,28 @@ export function createBrowserPageSource({
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Summarises what the page did contain, so a failure is debuggable from the
+ * error alone: which of title/price were present, whether any page state
+ * global existed, and where we ended up.
+ */
+function describeEmptyPage(probe: ProbeResult | undefined): string {
+  if (!probe) return "page never became readable";
+
+  const dom = probe.domProduct;
+  const parts = [
+    `title=${dom?.title ? "yes" : "no"}`,
+    `price=${dom?.priceText ? "yes" : "no"}`,
+    `images=${dom?.images?.length ?? 0}`,
+    `state=${probe.pageData ? "yes" : "no"}`,
+  ];
+
+  try {
+    parts.push(`host=${new URL(probe.url).host}`);
+  } catch {
+    // A non-URL location is itself worth not crashing over.
+  }
+
+  return parts.join(" ");
+}

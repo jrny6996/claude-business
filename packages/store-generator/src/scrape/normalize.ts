@@ -364,6 +364,8 @@ export function fromDomProduct(dom: {
   ratingCountText?: string | null;
   shipsFrom?: string | null;
   description?: string | null;
+  highlights?: string[];
+  variants?: { id: string; options: Record<string, string>; available: boolean }[];
 }): Partial<RawProductData> {
   const out: Partial<RawProductData> = {};
 
@@ -400,8 +402,30 @@ export function fromDomProduct(dom: {
     if (count !== undefined && count >= 0) out.ratingCount = Math.round(count);
   }
 
+  // The shipping line reads like "Free shipping · Ship from United States";
+  // only the origin is interesting.
   const shipsFrom = asString(dom.shipsFrom);
-  if (shipsFrom) out.shipsFrom = shipsFrom;
+  if (shipsFrom) {
+    const origin = /Ship(?:s|ped)?\s+from\s+([^·|,]+)/i.exec(shipsFrom)?.[1];
+    out.shipsFrom = (origin ?? shipsFrom).trim();
+  }
+
+  const highlights = (dom.highlights ?? [])
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 6);
+  if (highlights.length) out.highlights = highlights;
+
+  // Variant prices aren't in the DOM — only the selected one is rendered — so
+  // they inherit the headline price rather than being invented.
+  if (dom.variants?.length && out.priceCents !== undefined) {
+    out.variants = dom.variants.map((variant) => ({
+      id: variant.id,
+      options: variant.options,
+      priceCents: out.priceCents as number,
+      available: variant.available,
+    }));
+  }
 
   return out;
 }
