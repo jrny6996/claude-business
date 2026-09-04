@@ -4,6 +4,7 @@ import { createApp, type AppContext } from "@repo/api";
 import { createDataLayer, type DataLayer } from "@repo/db";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import type { Hono } from "hono";
+import { createBrowserPageSource, type BrowserPageSource } from "./browser-source.js";
 import { createCipher } from "./cipher.js";
 
 /** Vite dev server, when running `npm run dev`. */
@@ -13,8 +14,13 @@ const IS_DEV = Boolean(DEV_SERVER_URL);
 let data: DataLayer | undefined;
 let api: Hono | undefined;
 let window: BrowserWindow | undefined;
+let pageSource: BrowserPageSource | undefined;
 
-function bootstrap(): { api: Hono; data: DataLayer } {
+function bootstrap(): {
+  api: Hono;
+  data: DataLayer;
+  pageSource: BrowserPageSource;
+} {
   const userData = app.getPath("userData");
   const { cipher, osBacked } = createCipher();
 
@@ -26,12 +32,27 @@ function bootstrap(): { api: Hono; data: DataLayer } {
 
   const layer = createDataLayer(join(userData, "store-validator.sqlite"), cipher);
 
+  // Product pages are loaded in a real Chromium window: AliExpress renders its
+  // data client-side and blocks plain HTTP clients. If it challenges us, the
+  // window is shown so the user can clear the check themselves.
+  const source = createBrowserPageSource({
+    events: {
+      onChallenge: (info) => {
+        window?.webContents.send("scrape:challenge", info);
+      },
+      onResolved: () => {
+        window?.webContents.send("scrape:challenge-resolved");
+      },
+    },
+  });
+
   const ctx: AppContext = {
     data: layer,
     storesDir: join(app.getPath("documents"), "Store Validator"),
+    pageSource: source,
   };
 
-  return { api: createApp(ctx), data: layer };
+  return { api: createApp(ctx), data: layer, pageSource: source };
 }
 
 function createWindow(): BrowserWindow {
@@ -55,6 +76,15 @@ function createWindow(): BrowserWindow {
   });
 
   win.once("ready-to-show", () => win.show());
+
+  // Closing the main UI tears the hidden scrape window down with it, so a
+  // background window can never keep the process alive on its own.
+  win.on("closed", () => {
+    if (window === win) window = undefined;
+    // Dispose but keep the reference: the API context still holds this source
+    // and will transparently recreate its window if a scrape happens later.
+    pageSource?.dispose();
+  });
 
   // Any attempt to navigate away or open a window goes to the real browser
   // instead — a generated store's links must never take over the app frame.
@@ -185,12 +215,15 @@ if (!app.requestSingleInstanceLock()) {
     const started = bootstrap();
     api = started.api;
     data = started.data;
+    pageSource = started.pageSource;
 
     registerIpc();
     window = createWindow();
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) window = createWindow();
+      // Tracked explicitly rather than counting windows: the scrape window
+      // lingers hidden between scrapes and would otherwise look like a live UI.
+      if (!window || window.isDestroyed()) window = createWindow();
     });
   });
 
@@ -198,7 +231,10 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== "darwin") app.quit();
   });
 
+
   app.on("before-quit", () => {
+    pageSource?.dispose();
+    pageSource = undefined;
     data?.close();
     data = undefined;
   });

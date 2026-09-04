@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 /**
  * The entire surface the renderer gets.
@@ -30,6 +30,25 @@ const bridge = {
       platform: string;
       isDev: boolean;
     }>;
+  },
+  /**
+   * Notifies the UI that AliExpress is asking a human to clear a check. Only
+   * the main process can emit these; the renderer can only listen.
+   */
+  onScrapeChallenge(
+    listener: (info: { url: string; kind: string } | null) => void,
+  ): () => void {
+    const onChallenge = (_event: IpcRendererEvent, info: unknown) =>
+      listener(info as { url: string; kind: string });
+    const onResolved = () => listener(null);
+
+    ipcRenderer.on("scrape:challenge", onChallenge);
+    ipcRenderer.on("scrape:challenge-resolved", onResolved);
+
+    return () => {
+      ipcRenderer.removeListener("scrape:challenge", onChallenge);
+      ipcRenderer.removeListener("scrape:challenge-resolved", onResolved);
+    };
   },
 };
 

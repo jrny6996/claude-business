@@ -30,10 +30,16 @@ function fakeFetch(): { fetchImpl: FetchLike; calls: string[] } {
 
   const fetchImpl = (async (url: string, init: Record<string, unknown> = {}) => {
     calls.push(url);
+    // Shaped like a real Response: `fetchPage` follows redirects itself now, so
+    // it reads `location` and accumulates cookies from the headers.
     const reply = (payload: unknown, ok = true, status = 200) => ({
       ok,
       status,
       url,
+      headers: {
+        get: (name: string) => (name.toLowerCase() === "location" ? null : null),
+        getSetCookie: () => [] as string[],
+      },
       text: async () =>
         typeof payload === "string" ? payload : JSON.stringify(payload),
     });

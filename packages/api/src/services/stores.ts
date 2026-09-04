@@ -32,6 +32,7 @@ export async function previewProduct(
 ): Promise<NormalizedProduct> {
   return scrapeProduct(url, {
     ...(ctx.fetchImpl ? { fetchImpl: ctx.fetchImpl } : {}),
+    ...(ctx.pageSource ? { pageSource: ctx.pageSource } : {}),
     now: nowOf(ctx),
   });
 }

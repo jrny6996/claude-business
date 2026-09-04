@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { NormalizedProduct, Store } from "@repo/shared";
 import { ApiError, api, desktop } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
@@ -27,11 +27,18 @@ export function NewStore({ onCreated }: { onCreated: () => void }) {
   const [markup, setMarkup] = useState("2.5");
   const [useAiCopy, setUseAiCopy] = useState(false);
   const [enableCheckout, setEnableCheckout] = useState(true);
+  const [challenge, setChallenge] = useState<{ kind: string } | null>(null);
+
+  // AliExpress renders listings client-side and sometimes puts a human check in
+  // front of them. When that happens the main process opens the page in a real
+  // window; all the UI has to do is explain why a window just appeared.
+  useEffect(() => desktop.onScrapeChallenge(setChallenge), []);
 
   const preview = async () => {
     setBusy("preview");
     setError(null);
     setResult(null);
+    setChallenge(null);
     try {
       const scraped = (await api.previewProduct(url)) as NormalizedProduct;
       setProduct(scraped);
@@ -107,9 +114,23 @@ export function NewStore({ onCreated }: { onCreated: () => void }) {
         </button>
       </div>
 
+      {challenge && (
+        <Banner title="AliExpress needs you to confirm you're human">
+          A browser window has opened with the listing. Complete the check there
+          and we'll carry on reading the product automatically — you usually only
+          have to do this once.
+        </Banner>
+      )}
+
       {error && (
         <Banner title={error.message}>
           {error.detail && <div className="mono">{error.detail}</div>}
+          {(error.code === "BOT_CHALLENGE" ||
+            error.code === "CHALLENGE_ABANDONED") && (
+            <div style={{ marginTop: 8 }}>
+              Try again — the window will reopen so you can finish the check.
+            </div>
+          )}
         </Banner>
       )}
 

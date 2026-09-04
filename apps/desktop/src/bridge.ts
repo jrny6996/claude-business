@@ -11,6 +11,9 @@ export interface DesktopBridge {
   openPath(target: string): Promise<boolean>;
   openExternal(url: string): Promise<boolean>;
   info(): Promise<{ version: string; platform: string; isDev: boolean }>;
+  onScrapeChallenge(
+    listener: (info: { url: string; kind: string } | null) => void,
+  ): () => void;
 }
 
 declare global {
@@ -104,4 +107,7 @@ export const desktop = {
   openPath: (target: string) => bridge().openPath(target),
   openExternal: (url: string) => bridge().openExternal(url),
   info: () => bridge().info(),
+  onScrapeChallenge: (
+    listener: (info: { url: string; kind: string } | null) => void,
+  ) => bridge().onScrapeChallenge(listener),
 };

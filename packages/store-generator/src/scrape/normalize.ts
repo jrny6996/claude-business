@@ -51,6 +51,18 @@ export function fromRunParams(html: string): Partial<RawProductData> {
     extractJsonAfter(html, "window._dida_config_");
   if (!root) return {};
 
+  return productDataFromPageState(root);
+}
+
+/**
+ * Reads AliExpress page state that has already been parsed.
+ *
+ * A live browser page hands us the real `window.runParams` object, so the same
+ * field mapping has to work without going through HTML text first.
+ */
+export function productDataFromPageState(root: unknown): Partial<RawProductData> {
+  if (root === null || typeof root !== "object") return {};
+
   const data = (get(root, "data") ?? root) as unknown;
   const out: Partial<RawProductData> = {};
 
@@ -335,6 +347,88 @@ export function mergeRaw(...sources: Partial<RawProductData>[]): RawProductData 
 /** Runs every extractor over the page, best source first. */
 export function extractRawProduct(html: string): RawProductData {
   return mergeRaw(fromRunParams(html), fromJsonLd(html), fromOpenGraph(html));
+}
+
+/**
+ * Turns text read off the rendered page into loose product data.
+ *
+ * Only used when the structured page state wasn't available. Deliberately
+ * forgiving: a missing field here just means a later source gets a turn.
+ */
+export function fromDomProduct(dom: {
+  title?: string | null;
+  priceText?: string | null;
+  compareAtText?: string | null;
+  images?: string[];
+  ratingText?: string | null;
+  ratingCountText?: string | null;
+  shipsFrom?: string | null;
+  description?: string | null;
+}): Partial<RawProductData> {
+  const out: Partial<RawProductData> = {};
+
+  const title = asString(dom.title);
+  if (title) out.title = title;
+
+  const description = asString(dom.description);
+  if (description) out.description = description;
+
+  if (dom.priceText) {
+    const cents = parsePriceToCents(dom.priceText);
+    if (cents !== undefined) out.priceCents = cents;
+    const currency = detectCurrency(dom.priceText);
+    if (currency) out.currency = currency;
+  }
+
+  if (dom.compareAtText) {
+    const cents = parsePriceToCents(dom.compareAtText);
+    if (cents !== undefined) out.compareAtPriceCents = cents;
+  }
+
+  const images = (dom.images ?? [])
+    .map((url) => normalizeImageUrl(url))
+    .filter((url): url is string => url !== null);
+  if (images.length) out.images = images;
+
+  if (dom.ratingText) {
+    const rating = asNumber(/[\d.]+/.exec(dom.ratingText)?.[0]);
+    if (rating !== undefined) out.ratingAverage = clamp(rating, 0, 5);
+  }
+
+  if (dom.ratingCountText) {
+    const count = asNumber(dom.ratingCountText.replace(/[^\d]/g, ""));
+    if (count !== undefined && count >= 0) out.ratingCount = Math.round(count);
+  }
+
+  const shipsFrom = asString(dom.shipsFrom);
+  if (shipsFrom) out.shipsFrom = shipsFrom;
+
+  return out;
+}
+
+/**
+ * Extracts from a loaded page, preferring page state read out of a live
+ * browser.
+ *
+ * AliExpress renders product data client-side, so the served HTML has an empty
+ * title and no price. When the page came from a real Chromium window we get the
+ * populated `runParams` object instead, and that is by far the best source. The
+ * HTML extractors stay in the chain as a fallback for anything server-rendered.
+ *
+ * Typed structurally so this file stays independent of the page-source module.
+ */
+export function extractRawProductFromPage(page: {
+  html: string;
+  pageData?: unknown;
+  domProduct?: Parameters<typeof fromDomProduct>[0];
+}): RawProductData {
+  return mergeRaw(
+    page.pageData === undefined ? {} : productDataFromPageState(page.pageData),
+    page.domProduct === undefined ? {} : fromDomProduct(page.domProduct),
+    fromRunParams(page.html),
+    fromJsonLd(page.html),
+    fromOpenGraph(page.html),
+  );
 }
 
 export interface NormalizeOptions {

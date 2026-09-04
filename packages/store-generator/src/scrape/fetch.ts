@@ -6,11 +6,12 @@ import { AppError } from "@repo/shared";
  */
 export type FetchLike = (
   input: string,
-  init?: { headers?: Record<string, string>; redirect?: "follow" | "manual"; signal?: AbortSignal },
+  init?: Record<string, unknown>,
 ) => Promise<{
   ok: boolean;
   status: number;
   url: string;
+  headers: { get(name: string): string | null; getSetCookie?(): string[] };
   text(): Promise<string>;
 }>;
 
@@ -19,12 +20,15 @@ export interface FetchPageOptions {
   timeoutMs?: number;
   /** Retries for transient failures (network errors, 429, 5xx). */
   retries?: number;
+  /** Redirect hops to follow before giving up. */
+  maxRedirects?: number;
   /** Injected for tests so retry backoff doesn't actually sleep. */
   sleep?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const DEFAULT_RETRIES = 2;
+const DEFAULT_MAX_REDIRECTS = 10;
 
 /**
  * A desktop browser UA. AliExpress serves a stripped page to unknown clients,
@@ -38,6 +42,18 @@ const BROWSER_HEADERS: Record<string, string> = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 
+/**
+ * Pins region, currency and locale up front.
+ *
+ * Without these AliExpress redirects a fresh client through its regional
+ * gateway to set them, and that hop lands on a cookie-sync pair that a client
+ * with no cookie jar will bounce between until it exhausts its redirect budget.
+ */
+const REGION_COOKIES: Record<string, string> = {
+  aep_usuc_f: "site=glo&c_tp=USD&region=US&b_locale=en_US",
+  intl_locale: "en_US",
+};
+
 export interface FetchedPage {
   html: string;
   /** Final URL after redirects — short links resolve to the real item here. */
@@ -47,12 +63,36 @@ export interface FetchedPage {
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Minimal cookie jar: enough to survive a redirect chain, nothing more. */
+class CookieJar {
+  readonly #jar = new Map<string, string>(Object.entries(REGION_COOKIES));
+
+  absorb(headers: { getSetCookie?(): string[]; get(name: string): string | null }): void {
+    const lines =
+      headers.getSetCookie?.() ??
+      (headers.get("set-cookie") ? [headers.get("set-cookie") as string] : []);
+
+    for (const line of lines) {
+      const pair = line.split(";")[0] ?? "";
+      const idx = pair.indexOf("=");
+      if (idx > 0) {
+        this.#jar.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
+      }
+    }
+  }
+
+  header(): string {
+    return [...this.#jar].map(([key, value]) => `${key}=${value}`).join("; ");
+  }
+}
+
 /**
- * Fetches a product page, retrying transient failures.
+ * Fetches a product page, following redirects itself so cookies set mid-chain
+ * are carried forward, and retrying transient failures.
  *
  * Never throws a raw network error: everything surfaces as an {@link AppError}
- * with `FETCH_FAILED` so the UI can say something useful instead of leaking a
- * stack trace about sockets.
+ * whose message distinguishes a timeout from a dead link from a redirect loop,
+ * because "check your connection" is actively misleading for the latter two.
  */
 export async function fetchPage(
   url: string,
@@ -60,6 +100,7 @@ export async function fetchPage(
     fetchImpl = globalThis.fetch as unknown as FetchLike,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     retries = DEFAULT_RETRIES,
+    maxRedirects = DEFAULT_MAX_REDIRECTS,
     sleep = defaultSleep,
   }: FetchPageOptions = {},
 ): Promise<FetchedPage> {
@@ -68,40 +109,113 @@ export async function fetchPage(
   }
 
   let lastStatus: number | undefined;
+  let lastFailure: "network" | "timeout" | "redirect-loop" = "network";
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(250 * 2 ** (attempt - 1));
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const jar = new CookieJar();
+    let current = url;
+    let redirected = 0;
 
     try {
-      const response = await fetchImpl(url, {
-        headers: BROWSER_HEADERS,
-        redirect: "follow",
-        signal: controller.signal,
-      });
+      for (;;) {
+        const response = await withTimeout(
+          (signal) =>
+            fetchImpl(current, {
+              headers: { ...BROWSER_HEADERS, Cookie: jar.header() },
+              redirect: "manual",
+              signal,
+            }),
+          timeoutMs,
+        );
 
-      if (response.ok) {
-        return { html: await response.text(), finalUrl: response.url || url };
+        jar.absorb(response.headers);
+
+        const location =
+          response.status >= 300 && response.status < 400
+            ? response.headers.get("location")
+            : null;
+
+        if (location) {
+          if (++redirected > maxRedirects) {
+            lastFailure = "redirect-loop";
+            break;
+          }
+          current = new URL(location, current).toString();
+          continue;
+        }
+
+        if (response.ok) {
+          return {
+            html: await response.text(),
+            finalUrl: response.url || current,
+          };
+        }
+
+        lastStatus = response.status;
+        if (!isRetryable(response.status)) {
+          throw httpError(response.status);
+        }
+        break;
       }
-
-      lastStatus = response.status;
-      if (!isRetryable(response.status)) break;
-    } catch {
-      // Network error or timeout — retryable until we run out of attempts.
+    } catch (cause) {
+      if (cause instanceof AppError) throw cause;
+      lastFailure = cause instanceof TimeoutError ? "timeout" : "network";
       lastStatus = undefined;
-    } finally {
-      clearTimeout(timer);
     }
+  }
+
+  if (lastStatus !== undefined) throw httpError(lastStatus);
+
+  if (lastFailure === "redirect-loop") {
+    throw new AppError(
+      "FETCH_FAILED",
+      "AliExpress kept redirecting that link without ever serving the product page.",
+      "redirect loop",
+    );
   }
 
   throw new AppError(
     "FETCH_FAILED",
-    lastStatus === 404
+    lastFailure === "timeout"
+      ? "That product page took too long to respond. Try again."
+      : "Couldn't reach AliExpress. Check your connection and try again.",
+    lastFailure,
+  );
+}
+
+class TimeoutError extends Error {}
+
+async function withTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await run(controller.signal);
+  } catch (cause) {
+    throw timedOut ? new TimeoutError() : cause;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function httpError(status: number): AppError {
+  return new AppError(
+    "FETCH_FAILED",
+    status === 404
       ? "That product page no longer exists on AliExpress."
-      : "Couldn't reach that product page. Check your connection and try again.",
-    lastStatus === undefined ? "network error" : `HTTP ${lastStatus}`,
+      : status === 403 || status === 429
+        ? "AliExpress refused that request. It may be rate-limiting this machine."
+        : "AliExpress returned an error for that product page.",
+    `HTTP ${status}`,
   );
 }
 

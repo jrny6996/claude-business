@@ -126,12 +126,56 @@ out of sync with reality.
 
 ## AliExpress scraping
 
-- No official API — expect to build/maintain a scraper or use a third-party product-data
-  API. This is fragile by nature: wrap it defensively, fail with a clear user-facing
-  error ("couldn't read that product page") rather than a silent broken store, and
-  isolate scraping logic in `packages/store-generator` so breakage doesn't cascade.
-- Don't hardcode assumptions about AliExpress page structure deep into the generator —
-  keep the scrape → normalized-product-data step separate from data → Astro-site step.
+**Verified against the live site, September 2026 — do not "simplify" this back
+to an HTTP fetch.** Three things are true and each one broke a naive scraper:
+
+1. **Product pages render client-side.** The HTML AliExpress serves has an empty
+   `<title>`, empty OpenGraph tags, no JSON-LD and no price anywhere. There is
+   nothing for an HTTP scraper to read. Product data only exists after the page's
+   JavaScript runs.
+2. **Non-browser clients get an anti-bot wall.** Requests land on
+   `/_____tmd_____/punish?x5secdata=…`. It is intermittent and IP-dependent.
+3. **A plain client with no cookie jar hits a redirect loop.** `aliexpress.com`
+   redirects to the regional gateway, which bounces through
+   `sync_cookie_read` → `sync_cookie_write`; drop the cookie you were just given
+   and you ping-pong until the redirect budget runs out. This previously surfaced
+   as "check your connection", which was actively misleading.
+
+So pages are loaded in a **real Chromium window** (`apps/desktop/electron/browser-source.ts`)
+and we read the page state the storefront itself uses. The layering is unchanged:
+a `PageSource` yields `{ html, pageData?, domProduct? }`, and `scrape/normalize.ts`
+turns that into `NormalizedProduct`. `packages/store-generator` still has zero
+Electron dependency, and tests inject a fake `PageSource`.
+
+**On the bot wall: we do not try to defeat it.** No fingerprint spoofing, no
+proxy rotation, no captcha-solving service. When a challenge is detected the
+window is _shown_ and the user clears it themselves, in their own session on
+their own IP. Cookies live in a `persist:aliexpress` partition so a check
+cleared once keeps working. The UA is set to plain Chrome only because
+Electron's default advertises `Electron/<version>` — it is a real Chromium
+either way. Whether scraping a given listing is allowed is the user's call.
+
+Non-obvious things that cost real debugging time:
+
+- After a human clears the check, **AliExpress does not navigate back to the
+  listing.** You must re-load the target URL yourself, or the poll watches a
+  page that will never become a product.
+- The challenge must be remembered _stickily_. By the time you give up, neither
+  the URL nor the body still looks like a challenge, and the failure gets
+  misreported as "this listing has no product on it".
+- `document.visibilityState` is `"visible"` even for a `show: false` window, so
+  hiding does not stop hydration. This was investigated and ruled out.
+- Page state lives under `window.runParams`, `window._pdp_cache_` **or**
+  `window._d_c_` depending on rollout, and sometimes only in the DOM. All four
+  are tried, best-source-first, and merged.
+- The `.com` → `.us` gateway rewrites the item id. `sourceId` comes from the
+  pasted URL, not the final one.
+- Don't serialise the whole DOM on every poll tick — pages are ~75-90KB and the
+  poll can run for minutes while a human works.
+
+Keep failures legible: a challenge is `BOT_CHALLENGE`, an abandoned window is
+`CHALLENGE_ABANDONED`, genuinely changed markup is `PARSE_FAILED`. Reporting the
+wrong one sends people hunting for a bug that isn't there.
 
 ## Coding conventions
 
