@@ -1,0 +1,175 @@
+/*
+ * App-specific layout only. Every colour, font, space and radius comes from
+ * the Modernist tokens in @repo/design-system — nothing is hard-coded here.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.app-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-8);
+}
+
+/* Nav tabs reuse the design system's .nav; these only add the active rule. */
+.nav-tab {
+  background: none;
+  border: 0;
+  padding: var(--space-1) 0;
+  font: inherit;
+  font-size: 14px;
+  color: inherit;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.nav-tab:hover {
+  color: var(--color-accent);
+}
+
+.nav-tab[aria-current="page"] {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.stack-tight {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.row-grow > .field {
+  flex: 1;
+  min-width: 260px;
+}
+
+/* The modular grid the system asks for: equal-width cells, visible structure. */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+@media (max-width: 760px) {
+  .grid-2,
+  .grid-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border-bottom: 2px solid var(--color-divider);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.preview {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .preview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.preview img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: var(--color-neutral-200);
+}
+
+.banner {
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-accent);
+  background: var(--color-accent-100);
+  color: var(--color-accent-800);
+  font-size: 13px;
+}
+
+.banner-neutral {
+  border-left-color: var(--color-divider);
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-800);
+}
+
+.banner ul {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.code-block {
+  padding: var(--space-3);
+  background: var(--color-neutral-200);
+  border-left: 2px solid var(--color-divider);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.spinner {
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+.empty {
+  padding: var(--space-8) 0;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+.inline-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Buttons in the system are flush-left when block-width; keep that honest. */
+.btn-block {
+  justify-content: flex-start;
+}

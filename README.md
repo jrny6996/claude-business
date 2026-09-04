@@ -1,159 +1,91 @@
-# Turborepo starter
+# Store Validator
 
-This Turborepo starter is maintained by the Turborepo core team.
+A desktop app that turns an AliExpress product link into a working dropshipping
+storefront you deploy yourself — for fast product/market validation.
 
-## Using this example
+The point of the architecture is a cost boundary: **we build the store, we don't
+run it.** No storefront hosting, no proxied AI inference, and no place in the
+payment path. Users bring their own keys and their own hosting, and pay those
+providers directly.
 
-Run the following command:
+## What it does
 
-```sh
-npx create-turbo@latest
+1. Paste an AliExpress product URL.
+2. It scrapes and normalizes the listing — title, images, price, variants, ratings.
+3. You set a name, a look and a retail markup.
+4. It emits a plain **Astro** static site with Stripe checkout wired in.
+5. You deploy it to your own Vercel/Netlify account.
+
+## Layout
+
+| Path                       | What lives there                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop`             | Electron app. `electron/` is the main process + sandboxed preload; `src/` is the React renderer.                                      |
+| `apps/landing`             | Astro marketing site, deployed separately.                                                                                            |
+| `packages/shared`          | Zod schemas and types shared by everything: product, store config, settings, `Result`/`AppError`.                                     |
+| `packages/db`              | SQLite: migrations, repositories, encrypted secret storage, premium backup. All DB access goes through here.                          |
+| `packages/store-generator` | `scrape/` (URL → normalized product), `generate/` (product → Astro project), `stripe/` (BYOK payment links), `ai/` (BYOK OpenRouter). |
+| `packages/api`             | Hono routes + services. Runs in-process inside Electron.                                                                              |
+| `packages/design-system`   | Modernist tokens/components for the app and landing page. Not used by generated stores.                                               |
+
+## Running it
+
+Requires Node >= 24.
+
+```bash
+npm install
+npm run build          # all packages, both apps
+npm run dev            # turbo dev
 ```
 
-## What's inside?
+To run just the desktop app with hot reload:
 
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `@next/eslint-plugin-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo build
+```bash
+npm run dev --workspace @repo/desktop
 ```
 
-Without global `turbo`, use your package manager:
+Checks:
 
-```sh
-cd my-turborepo
-npx turbo build
-npm exec turbo build
-npm exec turbo build
+```bash
+npm run test           # 178 tests
+npm run check-types
+npm run lint
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+> **Note:** if `NODE_ENV=production` is set in your shell, `npm install` will skip
+> devDependencies and nothing will build. Install with
+> `NODE_ENV=development npm install`.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+## How the cost boundary is enforced
 
-```sh
-turbo build --filter=docs
-```
+- **Stripe (BYOK).** The app creates a Stripe Payment Link at generation time
+  using the user's own secret key, on their machine. Only the resulting
+  `buy.stripe.com` URL is written into the store — there is a test asserting no
+  `sk_live`/`sk_test` string ever appears in generated output. Checkout runs on
+  Stripe's hosted page. We take no fee and see no card data.
+- **OpenRouter (BYOK).** AI copy rewriting calls OpenRouter directly with the
+  user's key and is billed to their account. Optional: with no key set, the store
+  still generates and the API returns a warning instead of failing.
+- **Hosting (BYO).** Generated stores are static output. We emit the deploy
+  command; the host's own CLI performs the upload. We never serve storefront
+  traffic.
+- **Secrets.** Encrypted at rest with the OS keychain via Electron `safeStorage`,
+  falling back to an AES-256-GCM local key file where no secret service exists.
+  Plaintext is never returned over IPC — the renderer only ever sees a `last4`
+  hint.
 
-Without global `turbo`:
+## Design notes worth knowing before editing
 
-```sh
-npx turbo build --filter=docs
-npm exec turbo build --filter=docs
-npm exec turbo build --filter=docs
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo dev
-npm exec turbo dev
-npm exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo dev --filter=web
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo dev --filter=web
-npm exec turbo dev --filter=web
-npm exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-npm exec turbo login
-npm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-npm exec turbo link
-npm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+- **Scraping is isolated on purpose.** Only
+  `packages/store-generator/src/scrape/extract.ts` knows what an AliExpress page
+  looks like. Everything downstream consumes `NormalizedProduct`. Extraction
+  tries page-state JSON (`window.runParams`, both the `*Component` and older
+  `*Module` key families), then JSON-LD, then OpenGraph, and merges them
+  best-source-first.
+- **Generated templates are constant strings.** All product data reaches the
+  storefront through `src/data/store.json`, never through string interpolation.
+  That is why a product title containing `"` or `<` can't corrupt the output —
+  there's a test for exactly that.
+- **Astro output is verified for real.** A generated store was built with the
+  actual Astro toolchain (5 pages, correct marked-up prices, both Stripe links
+  present), not just snapshot-tested.

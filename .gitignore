@@ -36,3 +36,17 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# Electron / build artifacts
+dist-electron/
+out/
+release/
+
+# Generated storefronts (build output of the tool)
+.generated-stores/
+
+# Local SQLite data
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm

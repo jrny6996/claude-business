@@ -1,0 +1,14 @@
+{
+  "name": "@repo/design-system",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Modernist design system — tokens and component classes shared by the desktop app and the landing page.",
+  "exports": {
+    "./styles.css": "./styles.css",
+    "./readme": "./README.md"
+  },
+  "files": ["styles.css"],
+  "scripts": {
+    "lint": "echo \"no lintable sources\" && exit 0"
+  }
+}

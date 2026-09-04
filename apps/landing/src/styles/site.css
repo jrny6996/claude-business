@@ -1,0 +1,144 @@
+/*
+ * Landing-page layout only. Every colour, font, space and radius comes from
+ * the Modernist tokens — nothing is hard-coded here.
+ */
+
+.wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+
+/* The modular grid: equal-width cells with visible structure. */
+.cells {
+  display: grid;
+  gap: 0;
+  border-top: 2px solid var(--color-divider);
+}
+
+.cells-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cells-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cell {
+  padding: var(--space-6) var(--space-4);
+  border-bottom: 2px solid var(--color-divider);
+  border-right: 1px solid var(--color-divider);
+}
+
+.cell:last-child {
+  border-right: 0;
+}
+
+@media (max-width: 800px) {
+  .cells-3,
+  .cells-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cell {
+    border-right: 0;
+  }
+}
+
+.cell-index {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: var(--space-2);
+}
+
+.hero {
+  padding: var(--space-8) 0;
+}
+
+.hero h1 {
+  font-size: clamp(38px, 7vw, 76px);
+  max-width: 20ch;
+  margin-bottom: var(--space-4);
+}
+
+.hero-lede {
+  font-size: 19px;
+  max-width: 58ch;
+  margin-bottom: var(--space-6);
+}
+
+.section {
+  padding: var(--space-8) 0 0;
+}
+
+.section-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  border-bottom: 2px solid var(--color-divider);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.lead {
+  font-size: 17px;
+  max-width: 62ch;
+}
+
+.list-plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.list-plain li {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-divider);
+  font-size: 15px;
+}
+
+/* The one place the accent runs as a field: the closing poster statement. */
+.poster {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  margin-top: var(--space-8);
+  padding: var(--space-8) 0;
+}
+
+.poster h2 {
+  font-size: clamp(32px, 6vw, 64px);
+  max-width: 24ch;
+  margin-bottom: var(--space-4);
+}
+
+.poster .btn-primary {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.poster .btn-primary:hover {
+  background: var(--color-neutral-200);
+}
+
+.site-footer {
+  border-top: 2px solid var(--color-divider);
+  padding: var(--space-6) 0;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+
+.footnote {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  margin-top: var(--space-4);
+  max-width: 62ch;
+}
+
+.price-figure {
+  font-size: 25px;
+  margin: var(--space-2) 0;
+}

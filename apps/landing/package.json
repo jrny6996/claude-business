@@ -1,0 +1,22 @@
+{
+  "name": "@repo/landing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev",
+    "preview": "astro preview",
+    "check-types": "astro check",
+    "lint": "eslint . --max-warnings 0"
+  },
+  "dependencies": {
+    "@repo/design-system": "*",
+    "astro": "7.3.1"
+  },
+  "devDependencies": {
+    "@repo/eslint-config": "*",
+    "eslint": "10.9.1",
+    "typescript": "7.0.2"
+  }
+}
