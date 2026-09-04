@@ -14,6 +14,9 @@ export interface DesktopBridge {
   onScrapeChallenge(
     listener: (info: { url: string; kind: string } | null) => void,
   ): () => void;
+  startPreview(storeId: string, projectDir: string): Promise<{ url: string }>;
+  stopPreview(storeId: string): Promise<boolean>;
+  previewStatus(storeId: string): Promise<{ url: string } | null>;
 }
 
 declare global {
@@ -93,12 +96,16 @@ export const api = {
   createStore: (payload: unknown) => call("POST", "/api/stores", payload),
   regenerateStore: (id: string, config?: unknown) =>
     call("POST", `/api/stores/${id}/regenerate`, config ? { config } : {}),
+  updateTheme: (id: string, theme: unknown) =>
+    call("PUT", `/api/stores/${id}/theme`, { theme }),
   deleteStore: (id: string) => call("DELETE", `/api/stores/${id}`),
   deployInstructions: (id: string, provider: string) =>
     call("GET", `/api/deploy/${id}/instructions?provider=${provider}`),
   recordDeployed: (id: string, deployedUrl: string) =>
     call("POST", `/api/deploy/${id}/deployed`, { deployedUrl }),
   license: () => call("GET", "/api/license"),
+  activateLicense: (key: string) => call("POST", "/api/license/activate", { key }),
+  deactivateLicense: () => call("DELETE", "/api/license"),
   runBackup: () => call("POST", "/api/deploy/backup"),
 };
 
@@ -110,4 +117,8 @@ export const desktop = {
   onScrapeChallenge: (
     listener: (info: { url: string; kind: string } | null) => void,
   ) => bridge().onScrapeChallenge(listener),
+  startPreview: (storeId: string, projectDir: string) =>
+    bridge().startPreview(storeId, projectDir),
+  stopPreview: (storeId: string) => bridge().stopPreview(storeId),
+  previewStatus: (storeId: string) => bridge().previewStatus(storeId),
 };

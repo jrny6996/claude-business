@@ -1,6 +1,11 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+  "globalEnv": [
+    "DSV_LICENSE_PUBLIC_KEY",
+    "DSV_PREVIEW_RUNTIME",
+    "DSV_DEV_SERVER_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": [
@@ -33,10 +38,7 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true,
-      "env": [
-        "DSV_DEV_SERVER_URL"
-      ]
+      "persistent": true
     }
   }
 }

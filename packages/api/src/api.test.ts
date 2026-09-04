@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Aes256GcmCipher, createDataLayer, type DataLayer } from "@repo/db";
+import { generateLicenseKeyPair, signLicensePayload } from "./services/license-keys.js";
 import type { FetchLike } from "@repo/store-generator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "./context.js";
@@ -83,6 +84,29 @@ interface Harness {
 let harness: Harness;
 let tempRoot: string;
 
+/**
+ * A throwaway issuer keypair. Signing real licences in tests is the only way to
+ * exercise the path users actually take — the API deliberately has no way to
+ * grant a tier without a valid signature.
+ */
+const issuer = generateLicenseKeyPair();
+
+function licenseKey(
+  over: Partial<{ tier: "free" | "premium"; expiresAt: string | null }> = {},
+): string {
+  return signLicensePayload(
+    {
+      v: 1,
+      email: "buyer@example.com",
+      tier: over.tier ?? "premium",
+      expiresAt: over.expiresAt === undefined ? "2027-01-01T00:00:00.000Z" : over.expiresAt,
+      issuedAt: "2026-09-04T00:00:00.000Z",
+      id: "lic_test_1",
+    },
+    issuer.privateKeyPem,
+  );
+}
+
 beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "dsv-api-"));
   const data = createDataLayer(":memory:", new Aes256GcmCipher(randomBytes(32)));
@@ -93,6 +117,7 @@ beforeEach(() => {
     storesDir: join(tempRoot, "stores"),
     fetchImpl,
     now: () => new Date("2026-09-04T12:00:00.000Z"),
+    licensePublicKeyPem: issuer.publicKeyPem,
   };
 
   const app = createApp(ctx);
@@ -214,19 +239,19 @@ describe("settings", () => {
 });
 
 describe("licensing", () => {
-  it("starts on the free tier", async () => {
+  it("starts on the free tier with no licence", async () => {
     const { payload } = await harness.request("GET", "/api/license");
-    expect((payload.value as { tier: string }).tier).toBe("free");
+    const value = payload.value as { tier: string; license: unknown };
+    expect(value.tier).toBe("free");
+    expect(value.license).toBeNull();
   });
 
-  it("records a premium entitlement and unlocks premium features", async () => {
-    await harness.request("PUT", "/api/license", {
-      tier: "premium",
-      expiresAt: "2027-01-01T00:00:00.000Z",
+  it("activates a genuine licence and unlocks premium features", async () => {
+    const activated = await harness.request("POST", "/api/license/activate", {
+      key: licenseKey(),
     });
-
-    const { payload } = await harness.request("GET", "/api/license");
-    expect((payload.value as { tier: string }).tier).toBe("premium");
+    expect(activated.status).toBe(200);
+    expect((activated.payload.value as { tier: string }).tier).toBe("premium");
 
     const backup = await harness.request("PUT", "/api/settings/backup", {
       enabled: true,
@@ -235,22 +260,96 @@ describe("licensing", () => {
     expect(backup.status).toBe(200);
   });
 
-  it("treats a lapsed entitlement as free", async () => {
-    await harness.request("PUT", "/api/license", {
-      tier: "premium",
-      expiresAt: "2020-01-01T00:00:00.000Z",
-    });
+  it("refuses a forged licence", async () => {
+    const forged = generateLicenseKeyPair();
+    const key = signLicensePayload(
+      {
+        v: 1,
+        email: "attacker@example.com",
+        tier: "premium",
+        expiresAt: null,
+        issuedAt: "2026-09-04T00:00:00.000Z",
+        id: "lic_forged",
+      },
+      forged.privateKeyPem,
+    );
 
-    const { payload } = await harness.request("GET", "/api/license");
-    expect((payload.value as { tier: string }).tier).toBe("free");
+    const { status, payload } = await harness.request(
+      "POST",
+      "/api/license/activate",
+      { key },
+    );
+    expect(status).toBe(400);
+    expect(payload.error?.message).toMatch(/isn't genuine/i);
   });
 
-  it("rejects a malformed expiry", async () => {
-    const { status } = await harness.request("PUT", "/api/license", {
-      tier: "premium",
-      expiresAt: "not-a-date",
+  it("refuses a tampered licence", async () => {
+    const key = licenseKey();
+    const tampered = `${key.slice(0, -6)}AAAAAA`;
+
+    const { status } = await harness.request("POST", "/api/license/activate", {
+      key: tampered,
     });
     expect(status).toBe(400);
+  });
+
+  it("refuses a licence that expired", async () => {
+    const { status, payload } = await harness.request(
+      "POST",
+      "/api/license/activate",
+      { key: licenseKey({ expiresAt: "2020-01-01T00:00:00.000Z" }) },
+    );
+    expect(status).toBe(400);
+    expect(payload.error?.message).toMatch(/expired/i);
+  });
+
+  it("refuses junk", async () => {
+    const { status, payload } = await harness.request(
+      "POST",
+      "/api/license/activate",
+      { key: "definitely-not-a-licence" },
+    );
+    expect(status).toBe(400);
+    expect(payload.error?.message).toMatch(/doesn't look like a licence key/i);
+  });
+
+  it("downgrades on its own once a licence lapses", async () => {
+    // Activated while valid, then read back after the expiry passes: the stored
+    // key is re-verified on every read rather than trusted from the database.
+    await harness.request("POST", "/api/license/activate", {
+      key: licenseKey({ expiresAt: "2026-09-05T00:00:00.000Z" }),
+    });
+    expect(
+      ((await harness.request("GET", "/api/license")).payload.value as {
+        tier: string;
+      }).tier,
+    ).toBe("premium");
+
+    harness.ctx.now = () => new Date("2026-10-01T00:00:00.000Z");
+
+    const later = (await harness.request("GET", "/api/license")).payload.value as {
+      tier: string;
+      license: { valid: boolean };
+    };
+    expect(later.tier).toBe("free");
+    expect(later.license.valid).toBe(false);
+  });
+
+  it("never returns the licence key itself, only a hint", async () => {
+    const key = licenseKey();
+    await harness.request("POST", "/api/license/activate", { key });
+
+    const { payload } = await harness.request("GET", "/api/license");
+    expect(JSON.stringify(payload)).not.toContain(key);
+    expect((payload.value as { license: { hint: string } }).license.hint).toContain(
+      "\u2026",
+    );
+  });
+
+  it("deactivates back to free", async () => {
+    await harness.request("POST", "/api/license/activate", { key: licenseKey() });
+    const { payload } = await harness.request("DELETE", "/api/license");
+    expect((payload.value as { tier: string }).tier).toBe("free");
   });
 });
 
@@ -294,30 +393,88 @@ describe("store creation", () => {
     expect(existsSync(join(result.store.outputDir, "src/data/store.json"))).toBe(true);
   });
 
-  it("warns instead of failing when no Stripe key is set", async () => {
-    const { payload } = await harness.request("POST", "/api/stores", baseBody);
+  const goPremium = () =>
+    harness.request("POST", "/api/license/activate", { key: licenseKey() });
+
+  it("gives a free store a waitlist, not checkout", async () => {
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+    });
+    const result = payload.value as {
+      store: { config: { checkout: { provider: string; paymentLinkUrl: null } } };
+      warnings: { code: string }[];
+    };
+
+    expect(result.store.config.checkout.provider).toBe("waitlist");
+    expect(result.store.config.checkout.paymentLinkUrl).toBeNull();
+    expect(result.warnings.map((w) => w.code)).toContain("PREMIUM_REQUIRED");
+  });
+
+  it("keeps a free store on the waitlist even with a Stripe key saved", async () => {
+    // The key is theirs; taking payment is the thing being sold.
+    harness.data.settings.writeSecret("stripe_secret_key", "sk_test_abcd1234");
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+    });
+    const result = payload.value as {
+      store: { config: { checkout: { provider: string } } };
+    };
+
+    expect(result.store.config.checkout.provider).toBe("waitlist");
+  });
+
+  it("provisions Stripe checkout for a premium user with a key", async () => {
+    await goPremium();
+    harness.data.settings.writeSecret("stripe_secret_key", "sk_test_abcd1234");
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+    });
+    const result = payload.value as {
+      store: { config: { checkout: { provider: string; paymentLinkUrl: string } } };
+      warnings: unknown[];
+    };
+
+    expect(result.store.config.checkout.provider).toBe("stripe");
+    expect(result.store.config.checkout.paymentLinkUrl).toBe(
+      "https://buy.stripe.com/live_1",
+    );
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("falls back to a waitlist for a premium user with no Stripe key", async () => {
+    await goPremium();
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+    });
     const result = payload.value as {
       store: { config: { checkout: { provider: string } } };
       warnings: { code: string }[];
     };
 
     expect(result.warnings.map((w) => w.code)).toContain("MISSING_STRIPE_KEY");
-    expect(result.store.config.checkout.provider).toBe("none");
+    expect(result.store.config.checkout.provider).toBe("waitlist");
   });
 
-  it("provisions Stripe checkout when a key is set", async () => {
+  it("does not upgrade a free store to checkout on regenerate", async () => {
     harness.data.settings.writeSecret("stripe_secret_key", "sk_test_abcd1234");
+    const created = await harness.request("POST", "/api/stores", baseBody);
+    const id = (created.payload.value as { store: { id: string } }).store.id;
 
-    const { payload } = await harness.request("POST", "/api/stores", baseBody);
-    const result = payload.value as {
-      store: { config: { checkout: { paymentLinkUrl: string } } };
-      warnings: unknown[];
+    const again = await harness.request("POST", `/api/stores/${id}/regenerate`, {
+      config: { storeName: "Sound Lab", checkout: { provider: "stripe" } },
+    });
+    const result = again.payload.value as {
+      store: { config: { checkout: { provider: string } } };
     };
 
-    expect(result.store.config.checkout.paymentLinkUrl).toBe(
-      "https://buy.stripe.com/live_1",
-    );
-    expect(result.warnings).toEqual([]);
+    expect(result.store.config.checkout.provider).toBe("waitlist");
   });
 
   it("warns instead of failing when AI copy is asked for without a key", async () => {
@@ -454,9 +611,8 @@ describe("deploy", () => {
   });
 
   it("runs a backup for a premium user", async () => {
-    await harness.request("PUT", "/api/license", {
-      tier: "premium",
-      expiresAt: null,
+    await harness.request("POST", "/api/license/activate", {
+      key: licenseKey({ expiresAt: null }),
     });
     await harness.request("PUT", "/api/settings/backup", {
       enabled: true,

@@ -1,5 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import Download from "../components/Download.astro";
+import SignIn from "../components/SignIn.astro";
 
 const title = "Store Validator — test a product before you commit to it";
 const description =
@@ -50,6 +52,8 @@ const generated = [
     <a href="#how">How it works</a>
     <a href="#bring">What you bring</a>
     <a href="#pricing">Pricing</a>
+    <a href="#download">Download</a>
+    <a href="#signin">Licence</a>
   </header>
 
   <main>
@@ -60,7 +64,7 @@ const generated = [
         Stripe checkout — that you deploy to your own hosting in a few minutes.
         Kill it just as fast when the numbers say no.
       </p>
-      <a class="btn btn-primary" href="#pricing">Get the app</a>
+      <a class="btn btn-primary" href="#download">Download free</a>
     </section>
 
     <section class="wrap section" id="how">
@@ -126,34 +130,52 @@ const generated = [
       <div class="cells cells-2">
         <div class="cell">
           <div class="cell-index">Free</div>
-          <h3>Validate</h3>
-          <p class="price-figure">Generate unlimited stores</p>
+          <h3>Measure demand</h3>
+          <p class="price-figure">Unlimited stores, waitlist capture</p>
           <p class="card-body">
-            The whole generation pipeline: scrape, configure, generate, deploy.
-            Your keys, your hosting, your Stripe account.
+            The whole pipeline: scrape, theme, preview, generate, deploy. The buy
+            button captures emails to your own form endpoint, so you can measure
+            intent before you stock anything.
           </p>
+          <ul class="list-plain" style="margin-top: var(--space-2)">
+            <li>Unlimited store generation</li>
+            <li>Live Astro preview and themes</li>
+            <li>Waitlist email capture</li>
+            <li>Deploy to your own hosting</li>
+          </ul>
         </div>
         <div class="cell">
           <div class="cell-index">Premium</div>
-          <h3>Validate + keep</h3>
-          <p class="price-figure">Adds automated backups</p>
+          <h3>Take the money</h3>
+          <p class="price-figure">Adds Stripe checkout</p>
           <p class="card-body">
-            Snapshots of your store history to a folder you choose — your disk
-            or a cloud folder you already sync. Nothing is uploaded to us.
+            Turns the waitlist into a real checkout, created against your own
+            Stripe account with your own keys. We take no cut and never touch a
+            payment.
           </p>
+          <ul class="list-plain" style="margin-top: var(--space-2)">
+            <li>Everything in Free</li>
+            <li>Stripe checkout on your stores</li>
+            <li>Automated backups to a folder you pick</li>
+            <li>Licence works offline</li>
+          </ul>
         </div>
       </div>
       <p class="footnote">
-        Price points are not set yet — this section is deliberately
-        number-free pending a pricing decision.
+        The price of Premium isn't set yet, so this page deliberately shows no
+        number. What each tier does is settled: free measures demand, premium
+        takes payment.
       </p>
     </section>
+    <Download />
+
+    <SignIn />
   </main>
 
   <section class="poster">
     <div class="wrap">
       <h2>A dead product should cost you an afternoon, not a quarter.</h2>
-      <a class="btn btn-primary" href="#pricing">Get the app</a>
+      <a class="btn btn-primary" href="#download">Download free</a>
     </div>
   </section>
 

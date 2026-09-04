@@ -161,6 +161,7 @@ describe("generateSite", () => {
       provider: "stripe",
       paymentLinkUrl: "https://buy.stripe.com/test_base",
       variantPaymentLinks: { "12002": "https://buy.stripe.com/test_white" },
+      waitlistEndpoint: null,
     });
   });
 
@@ -168,6 +169,29 @@ describe("generateSite", () => {
     for (const file of generateSite(config, product, { now }).files) {
       expect(file.contents).not.toMatch(/sk_live|sk_test|rk_live/);
     }
+  });
+
+  it("builds a waitlist store when that is the provider", () => {
+    const waitlist = StoreConfigSchema.parse({
+      storeName: "Sound Lab",
+      supportEmail: "hi@soundlab.test",
+      checkout: {
+        provider: "waitlist",
+        waitlistEndpoint: "https://formspree.io/f/demo",
+      },
+    });
+    const files = new Map(
+      generateSite(waitlist, product, { now }).files.map((f) => [f.path, f.contents]),
+    );
+
+    expect(files.has("src/components/Waitlist.astro")).toBe(true);
+    expect(JSON.parse(files.get("src/data/store.json")!).checkout).toMatchObject({
+      provider: "waitlist",
+      waitlistEndpoint: "https://formspree.io/f/demo",
+    });
+    // A store that can't take an order must not advertise a cart.
+    expect(files.get("src/components/Header.astro")).toContain("showCart");
+    expect(files.get("src/components/BuyBox.astro")).toContain("isWaitlist");
   });
 
   it("degrades to a disabled checkout when no payment link exists", () => {

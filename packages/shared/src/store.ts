@@ -3,7 +3,9 @@ import { NormalizedProductSchema } from "./product.js";
 
 export const ThemeSchema = z.object({
   /** Named preset shipped with the generator. */
-  preset: z.enum(["minimal", "bold", "editorial"]).default("minimal"),
+  preset: z
+    .enum(["minimal", "bold", "editorial", "warm", "noir"])
+    .default("minimal"),
   accentColor: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "expected a hex colour like #2563eb")
@@ -40,7 +42,19 @@ export type RetailPricing = z.infer<typeof RetailPricingSchema>;
  */
 export const CheckoutConfigSchema = z
   .object({
-    provider: z.enum(["stripe", "none"]).default("stripe"),
+    /**
+     * `stripe` is premium-only. Free stores get `waitlist`, which captures
+     * interest instead of taking money — for validation that is arguably the
+     * cleaner signal anyway.
+     */
+    provider: z.enum(["stripe", "waitlist", "none"]).default("waitlist"),
+    /**
+     * Where the waitlist form posts. The user's own form endpoint (Formspree,
+     * Buttondown, their own webhook) — we never receive these addresses, and a
+     * static store has nowhere to put them otherwise. With none set the form
+     * falls back to a mailto: on the store's support address.
+     */
+    waitlistEndpoint: z.url().nullable().default(null),
     /** Stripe-hosted payment link for the base product. */
     paymentLinkUrl: z.url().nullable().default(null),
     /** Payment links per variant id, for multi-variant listings. */

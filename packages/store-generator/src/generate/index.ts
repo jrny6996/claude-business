@@ -9,7 +9,7 @@ import {
   type StoreConfig,
 } from "@repo/shared";
 import { buildContext, buildStoreData, slugify, type SiteContext } from "./context.js";
-import { buyBoxAstro, cartLibTs } from "./templates/buybox.js";
+import { buyBoxAstro, cartLibTs, waitlistAstro } from "./templates/buybox.js";
 import {
   footerAstro,
   galleryAstro,
@@ -32,7 +32,7 @@ import {
   robotsTxt,
   tsconfig,
 } from "./templates/project.js";
-import { globalCss, themeCss } from "./templates/styles.js";
+import { globalCss, themeCss, waitlistCss } from "./templates/styles.js";
 
 export * from "./context.js";
 
@@ -70,13 +70,14 @@ export function generateSite(
     },
     { path: "src/lib/cart.ts", contents: cartLibTs() },
     { path: "src/styles/theme.css", contents: themeCss(ctx) },
-    { path: "src/styles/global.css", contents: globalCss() },
+    { path: "src/styles/global.css", contents: globalCss() + waitlistCss() },
     { path: "src/layouts/Layout.astro", contents: layoutAstro() },
     { path: "src/components/Header.astro", contents: headerAstro() },
     { path: "src/components/Footer.astro", contents: footerAstro() },
     { path: "src/components/Gallery.astro", contents: galleryAstro() },
     { path: "src/components/Rating.astro", contents: ratingAstro() },
     { path: "src/components/BuyBox.astro", contents: buyBoxAstro() },
+    { path: "src/components/Waitlist.astro", contents: waitlistAstro() },
     { path: "src/pages/index.astro", contents: indexAstro() },
     { path: "src/pages/cart.astro", contents: cartAstro() },
     { path: "src/pages/shipping.astro", contents: policyAstro("shipping") },

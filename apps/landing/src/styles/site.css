@@ -142,3 +142,36 @@
   font-size: 25px;
   margin: var(--space-2) 0;
 }
+
+/* Licence check + download */
+.signin-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  max-width: 620px;
+}
+
+.signin-form .field {
+  flex: 1;
+  min-width: 280px;
+}
+
+.signin-result {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-divider);
+  font-size: 14px;
+  max-width: 620px;
+}
+
+.signin-result.is-ok {
+  border-left-color: var(--color-accent);
+  background: var(--color-accent-100);
+  color: var(--color-accent-800);
+}
+
+.signin-result.is-bad {
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-800);
+}

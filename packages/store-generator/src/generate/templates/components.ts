@@ -54,6 +54,10 @@ const pageDescription = description ?? store.store.tagline ?? store.product.titl
 export function headerAstro(): string {
   return `---
 import store from "../data/store.json";
+
+// A waitlist store has no cart to link to — showing one would promise a
+// purchase it can't take.
+const showCart = store.checkout.provider === "stripe";
 ---
 
 <header class="site-header">
@@ -66,7 +70,7 @@ import store from "../data/store.json";
       <a href="/">Product</a>
       <a href="/shipping/">Shipping</a>
       <a href="/returns/">Returns</a>
-      <a href="/cart/">Cart (<span data-cart-count>0</span>)</a>
+      {showCart && <a href="/cart/">Cart (<span data-cart-count>0</span>)</a>}
     </nav>
   </div>
 </header>

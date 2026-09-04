@@ -28,6 +28,29 @@ providers directly.
 | `packages/api`             | Hono routes + services. Runs in-process inside Electron.                                                                              |
 | `packages/design-system`   | Modernist tokens/components for the app and landing page. Not used by generated stores.                                               |
 
+## Tiers
+
+|                             | Free                 | Premium             |
+| --------------------------- | -------------------- | ------------------- |
+| Store generation            | unlimited            | unlimited           |
+| Live Astro preview + themes | yes                  | yes                 |
+| Buy button                  | **waitlist capture** | **Stripe checkout** |
+| Automated backups           | no                   | yes                 |
+
+Free measures demand; premium takes payment. The waitlist posts to the store
+owner's own form endpoint (falling back to `mailto:` their support address) —
+we never receive the addresses. Premium is unlocked with an Ed25519-signed
+licence key, verified offline.
+
+Mint a key for local development:
+
+```bash
+node scripts/issue-license.mjs --generate-keypair          # once
+node scripts/issue-license.mjs --email you@example.com --tier premium
+```
+
+Paste it into the app under **Settings → Licence**.
+
 ## Running it
 
 Requires Node >= 24.
@@ -47,9 +70,16 @@ npm run dev --workspace @repo/desktop
 Checks:
 
 ```bash
-npm run test           # 178 tests
+npm run test           # 230 tests
 npm run check-types
 npm run lint
+```
+
+Package installers:
+
+```bash
+npm run package --workspace @repo/desktop      # installers in apps/desktop/release
+npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
 ```
 
 > **Note:** if `NODE_ENV=production` is set in your shell, `npm install` will skip
@@ -89,3 +119,15 @@ npm run lint
 - **Astro output is verified for real.** A generated store was built with the
   actual Astro toolchain (5 pages, correct marked-up prices, both Stripe links
   present), not just snapshot-tested.
+- **Preview is the real site.** `Stores → Preview` runs the generated store's
+  own `astro dev` server and frames it, so it cannot drift from what deploys.
+  Astro can't start without a resolvable `node_modules`, so one shared runtime
+  is symlinked into each store rather than installed per store.
+- **The tier gate lives in one function.** `resolveCheckout` in
+  `packages/api/src/services/stores.ts`; both create and regenerate route
+  through it, so a regenerate can't move a store between tiers.
+- **Licences are signed, not asserted.** Entitlement is an Ed25519 token
+  re-verified on every read. Forged, tampered and expired keys are all refused,
+  with tests for each.
+- **Artifact names are pinned** in `electron-builder.yml` because the landing
+  page links to those exact filenames. Change one, change the other.

@@ -45,7 +45,33 @@ const PRESETS: Record<string, Preset> = {
     headingWeight: "500",
     headingTracking: "0",
   },
+  warm: {
+    radius: "16px",
+    surface: "#fffaf5",
+    ink: "#2b1c12",
+    muted: "#8a7160",
+    border: "#f0e2d4",
+    headingWeight: "650",
+    headingTracking: "-0.015em",
+  },
+  noir: {
+    radius: "6px",
+    surface: "#111113",
+    ink: "#f4f4f5",
+    muted: "#a1a1aa",
+    border: "#2a2a2e",
+    headingWeight: "700",
+    headingTracking: "-0.02em",
+  },
 };
+
+/** Presets a storefront can be built with, for the app's theme picker. */
+export const THEME_PRESETS = Object.keys(PRESETS) as (keyof typeof PRESETS)[];
+
+/** True when a preset's ground is dark, so the picker can preview it honestly. */
+export function isDarkPreset(preset: string): boolean {
+  return preset === "noir";
+}
 
 /** Theme tokens are the only generated CSS; the rest of the sheet is constant. */
 export function themeCss(ctx: SiteContext): string {
@@ -309,6 +335,29 @@ select, input[type="number"] {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+`;
+}
+
+/** Waitlist capture styles, appended to the storefront's global sheet. */
+export function waitlistCss(): string {
+  return `.waitlist { max-width: 320px; }
+
+.waitlist-form .field { margin-bottom: 12px; }
+
+.waitlist-input {
+  font: inherit;
+  color: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  width: 100%;
+}
+
+.waitlist-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 `;
 }

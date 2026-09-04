@@ -4,9 +4,11 @@ export function buyBoxAstro(): string {
   return `---
 import store from "../data/store.json";
 import Rating from "./Rating.astro";
+import Waitlist from "./Waitlist.astro";
 
 const { product, checkout } = store;
-const hasCheckout = checkout.provider === "stripe" && Boolean(checkout.paymentLinkUrl);
+const isStripe = checkout.provider === "stripe" && Boolean(checkout.paymentLinkUrl);
+const isWaitlist = checkout.provider === "waitlist";
 const optionNames = [
   ...new Set(product.variants.flatMap((variant) => Object.keys(variant.options))),
 ];
@@ -55,35 +57,39 @@ const optionNames = [
       </div>
     ))}
 
-    <div class="field">
-      <label for="quantity">Quantity</label>
-      <input id="quantity" type="number" min="1" max="99" value="1" />
-    </div>
-
-    {hasCheckout ? (
-      <a class="btn btn-primary" data-buy-now href={checkout.paymentLinkUrl}>
-        Buy now
-      </a>
-    ) : (
-      <span class="btn btn-primary" aria-disabled="true" data-buy-now>Buy now</span>
+    {!isWaitlist && (
+      <div class="field">
+        <label for="quantity">Quantity</label>
+        <input id="quantity" type="number" min="1" max="99" value="1" />
+      </div>
     )}
 
-    <p style="height: 8px"></p>
+    {isStripe && (
+      <>
+        <a class="btn btn-primary" data-buy-now href={checkout.paymentLinkUrl}>
+          Buy now
+        </a>
+        <p style="height: 8px"></p>
+        <button class="btn btn-secondary" type="button" data-add-to-cart>
+          Add to cart
+        </button>
+        <p class="checkout-note">
+          Secure checkout is hosted by Stripe. You'll be redirected to complete
+          your purchase.
+        </p>
+      </>
+    )}
 
-    <button class="btn btn-secondary" type="button" data-add-to-cart>
-      Add to cart
-    </button>
+    {isWaitlist && <Waitlist />}
 
-    {hasCheckout ? (
-      <p class="checkout-note">
-        Secure checkout is hosted by Stripe. You'll be redirected to complete
-        your purchase.
-      </p>
-    ) : (
-      <p class="checkout-note">
-        Checkout isn't connected yet. Add your Stripe secret key in the app and
-        regenerate this store to enable payments.
-      </p>
+    {!isStripe && !isWaitlist && (
+      <>
+        <span class="btn btn-primary" aria-disabled="true" data-buy-now>Buy now</span>
+        <p class="checkout-note">
+          Checkout isn't connected yet. Add your Stripe secret key in the app and
+          regenerate this store to enable payments.
+        </p>
+      </>
     )}
   </div>
 
@@ -117,6 +123,14 @@ const optionNames = [
 
       const link = paymentLinkFor(root, variant);
       if (buyNow instanceof HTMLAnchorElement && link) buyNow.href = link;
+
+      // Waitlist stores record which variant the visitor was looking at.
+      const hidden = document.querySelector("[data-waitlist-variant]");
+      if (hidden instanceof HTMLInputElement) {
+        hidden.value = Object.entries(readOptions())
+          .map(([name, value]) => name + ": " + value)
+          .join(", ");
+      }
     };
 
     root.querySelectorAll("[data-option]").forEach((select) => {
@@ -135,6 +149,99 @@ const optionNames = [
 
     sync();
   }
+</script>
+`;
+}
+
+/**
+ * The waitlist capture used by free-tier stores.
+ *
+ * Posts to the store owner's own form endpoint. If they haven't set one it
+ * degrades to a `mailto:` on their support address, so the button is never
+ * dead. Either way the addresses go to them, never to us — a static store has
+ * nowhere to keep them and we are not a backend.
+ */
+export function waitlistAstro(): string {
+  return `---
+import store from "../data/store.json";
+
+const { checkout, store: shop } = store;
+const endpoint = checkout.waitlistEndpoint;
+const mailto = shop.supportEmail
+  ? "mailto:" + shop.supportEmail + "?subject=" + encodeURIComponent("Waitlist: " + store.product.title)
+  : null;
+---
+
+<div class="waitlist">
+  {endpoint ? (
+    <form class="waitlist-form" method="POST" action={endpoint} data-waitlist>
+      <input type="hidden" name="product" value={store.product.title} />
+      <input type="hidden" name="variant" value="" data-waitlist-variant />
+      <div class="field">
+        <label for="waitlist-email">Email</label>
+        <input
+          id="waitlist-email"
+          class="waitlist-input"
+          type="email"
+          name="email"
+          required
+          placeholder="you@example.com"
+          autocomplete="email"
+        />
+      </div>
+      <button class="btn btn-primary" type="submit">Join the waitlist</button>
+      <p class="checkout-note" data-waitlist-status role="status">
+        Be first to know when this launches.
+      </p>
+    </form>
+  ) : mailto ? (
+    <>
+      <a class="btn btn-primary" href={mailto}>Join the waitlist</a>
+      <p class="checkout-note">
+        Opens your email app so you can register interest.
+      </p>
+    </>
+  ) : (
+    <>
+      <span class="btn btn-primary" aria-disabled="true">Join the waitlist</span>
+      <p class="checkout-note">
+        No waitlist destination is set. Add a form endpoint or a support email in
+        the app and regenerate this store.
+      </p>
+    </>
+  )}
+</div>
+
+<script>
+  const form = document.querySelector("[data-waitlist]");
+  const status = document.querySelector("[data-waitlist-status]");
+
+  form?.addEventListener("submit", async (event) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    event.preventDefault();
+
+    const button = form.querySelector("button[type=submit]");
+    if (button instanceof HTMLButtonElement) button.disabled = true;
+    if (status) status.textContent = "Adding you\u2026";
+
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: new FormData(form),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      form.reset();
+      if (status) status.textContent = "You're on the list. Thanks!";
+    } catch {
+      // The endpoint belongs to the store owner, so we can't diagnose it for
+      // the visitor — just don't pretend it worked.
+      if (status) {
+        status.textContent = "That didn't go through. Please try again later.";
+      }
+      if (button instanceof HTMLButtonElement) button.disabled = false;
+    }
+  });
 </script>
 `;
 }

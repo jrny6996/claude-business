@@ -27,27 +27,105 @@ explicitly discussed. Two mechanisms enforce this:
 If a task description implies server-side image processing, video transcoding, or an
 AI call billed to us, stop and flag it rather than implementing it.
 
-## Checkout (BYOK Stripe)
+## Checkout and tiers
 
-Every generated store gets Stripe checkout, and the user brings their own keys.
-The mechanism matters, because a static site cannot hold a Stripe secret key:
+**Decided (explicitly, by the product owner): checkout is the premium
+feature.** This is the pricing decision this file said to checkpoint on, so it
+is recorded here rather than inferred.
+
+- **Free** — the buy button is a **waitlist capture**. For validation this is
+  arguably the better signal anyway: you learn whether people want it before
+  you stock anything.
+- **Premium** — Stripe checkout, created against the user's own account.
+
+The gate lives in exactly one place: `resolveCheckout` in
+`packages/api/src/services/stores.ts`. Both create and regenerate go through it,
+so a regenerate can never quietly move a store between tiers. A free user who
+has saved a Stripe key still gets a waitlist — the key is theirs, but _taking
+payment_ is the thing being sold.
+
+### How Stripe checkout works (premium)
 
 - At **generation time**, the desktop app calls Stripe directly from the user's
   machine with the user's own secret key and creates a Product, a Price and a
-  **Payment Link** (plus one extra Price/Link per available variant that is priced
+  **Payment Link** (plus one extra Price/Link per available variant priced
   differently from the base, capped at 20).
 - Only the resulting `https://buy.stripe.com/...` URL is written into the store.
-  Grep the generated output for `sk_live`/`sk_test` — there is a test asserting it
-  never appears.
-- Checkout therefore happens on **Stripe's** hosted page, not on the generated
-  store and not on anything we run. Quantity is adjustable there.
-- No Stripe key set? The store still generates, `checkout.provider` degrades to
-  `"none"`, the buy button renders disabled with an explanatory note, and the
-  create call returns a `MISSING_STRIPE_KEY` warning. Same graceful-degradation
-  contract as OpenRouter.
-- If someone later asks for a real server-side Checkout Session, that needs a
-  serverless function and a per-host Astro adapter. Flag it rather than adding it
-  quietly — it changes the deploy story.
+  There is a test asserting `sk_live`/`sk_test` never appears in generated
+  output.
+- Checkout happens on **Stripe's** hosted page. No money and no card data
+  touches us, and we take no cut.
+
+### How the waitlist works (free)
+
+- The form posts to a **user-supplied endpoint** (their Formspree, Buttondown,
+  own webhook), falling back to `mailto:` their support address so the button is
+  never dead. A static store has nowhere to keep emails and we are not a
+  backend — the addresses go to them, never to us.
+- A waitlist store renders **no cart and no cart nav link**. A store that cannot
+  take an order must not imply that it can.
+
+### Licensing
+
+Entitlement comes from an **Ed25519-signed licence key**, verified offline
+against a public key embedded at build time (`DSV_LICENSE_PUBLIC_KEY`). This
+replaced an earlier version that believed whatever tier the client claimed.
+
+- The stored key is **re-verified on every read**, not trusted from a database
+  column, so an expired licence downgrades on its own with no stale-premium
+  state to go wrong.
+- `packages/api/src/services/license-keys.ts` splits verify (public key, ships
+  to users) from sign (private key, issuer only). Nothing on a user's machine
+  can mint a licence. Tests prove forged, tampered and expired keys are refused.
+- Mint keys with `node scripts/issue-license.mjs --email … --tier premium`.
+  `--generate-keypair` creates an issuer pair. The dev private key is
+  gitignored; the production key must never be in the repo.
+- Still open, and deliberately not guessed: **the price of premium**, and where
+  the issuer runs / which payment webhook drives it. The landing page shows no
+  number on purpose.
+
+## Store preview
+
+`Stores → Preview` runs the generated store's **own Astro dev server** and
+frames it, so the preview is the real site and cannot drift from what deploys.
+
+- Astro needs a `node_modules` it can resolve `astro/config` from, and a
+  generated store has none. Rather than installing ~190 packages per store, one
+  shared runtime is **symlinked in** as the store's `node_modules` (a junction
+  on Windows). A store copied elsewhere to deploy just runs `npm install`, as
+  its README says.
+- `astro dev` **daemonises** in Astro 7: it prints the URL and pid, exits 0, and
+  is stopped with `astro dev stop`. There is no long-lived child to babysit —
+  but the daemon _will_ outlive the app if `stopAll()` isn't called on quit.
+- Theme edits rewrite only `src/styles/theme.css` and `src/data/store.json`, so
+  HMR updates the frame instead of restarting the server. Checkout is
+  deliberately untouched by a theme change.
+- Pure parts (command building, output parsing) are in
+  `packages/store-generator/src/preview.ts` and unit-tested; process spawning is
+  in `apps/desktop/electron/preview-server.ts`.
+- The renderer's CSP needs `frame-src http://127.0.0.1:* http://localhost:*`.
+
+Themes are five presets (`minimal`, `bold`, `editorial`, `warm`, `noir`) plus an
+accent colour and font stack, in
+`packages/store-generator/src/generate/templates/styles.ts`.
+
+## Packaging and downloads
+
+`npm run package --workspace @repo/desktop` builds installers via
+electron-builder into `apps/desktop/release`; `package:dir` produces an unpacked
+build, which is enough to check the config without signing.
+
+- `executableName` and `artifactName` are pinned in `electron-builder.yml`
+  because **the landing page links to those exact filenames**
+  (`apps/landing/src/components/Download.astro`). Change one, change the other,
+  or downloads 404. Without `executableName` the binary is named after the npm
+  package (`@repodesktop`).
+- `better-sqlite3` is `asarUnpack`ed and rebuilt against Electron by the builder.
+- Builds are unsigned; signing is a release-time decision (Apple identity /
+  Windows cert), and the landing page says so rather than letting users hit a
+  scary dialog unwarned.
+- `PUBLIC_RELEASE_BASE` and `PUBLIC_APP_VERSION` configure the landing page's
+  links (`apps/landing/.env.example`).
 
 ## Design system
 

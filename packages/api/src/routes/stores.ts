@@ -8,6 +8,7 @@ import {
   listStores,
   previewProduct,
   regenerateStore,
+  updateStoreTheme,
 } from "../services/stores.js";
 import { respondWithError } from "./errors.js";
 
@@ -21,6 +22,7 @@ const CreateBody = z.object({
 });
 
 const RegenerateBody = z.object({ config: z.unknown().optional() });
+const ThemeBody = z.object({ theme: z.unknown() });
 
 export function storeRoutes(ctx: AppContext): Hono {
   const app = new Hono();
@@ -59,6 +61,18 @@ export function storeRoutes(ctx: AppContext): Hono {
       return c.json({
         ok: true,
         value: await regenerateStore(ctx, c.req.param("id"), body.config),
+      });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.put("/:id/theme", async (c) => {
+    try {
+      const body = ThemeBody.parse(await c.req.json());
+      return c.json({
+        ok: true,
+        value: await updateStoreTheme(ctx, c.req.param("id"), body.theme),
       });
     } catch (cause) {
       return respondWithError(c, cause);

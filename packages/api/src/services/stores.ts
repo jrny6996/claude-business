@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   AppError,
   StoreConfigSchema,
+  ThemeSchema,
   type NormalizedProduct,
   type Store,
   type StoreConfig,
@@ -15,6 +16,7 @@ import {
   scrapeProduct,
 } from "@repo/store-generator";
 import { nowOf, type AppContext } from "../context.js";
+import { effectiveTier } from "./settings.js";
 
 export interface PreviewProductInput {
   url: string;
@@ -111,36 +113,12 @@ export async function createStore(
     }
   }
 
-  let finalConfig = config;
-
-  if (input.enableCheckout !== false && config.checkout.provider === "stripe") {
-    const secretKey = ctx.data.settings.readSecret("stripe_secret_key");
-    if (!secretKey) {
-      warnings.push({
-        code: "MISSING_STRIPE_KEY",
-        message:
-          "Checkout is not connected — add your Stripe secret key in Settings and regenerate to enable payments.",
-      });
-      finalConfig = { ...config, checkout: { ...config.checkout, provider: "none" } };
-    } else {
-      try {
-        const checkout = await provisionStripeCheckout(config, product, {
-          secretKey,
-          ...(ctx.fetchImpl ? { fetchImpl: ctx.fetchImpl } : {}),
-        });
-        finalConfig = { ...config, checkout };
-      } catch (cause) {
-        warnings.push({
-          code: cause instanceof AppError ? cause.code : "STRIPE_REQUEST_FAILED",
-          message:
-            cause instanceof AppError
-              ? cause.message
-              : "Couldn't set up Stripe checkout; the store was generated without payments.",
-        });
-        finalConfig = { ...config, checkout: { ...config.checkout, provider: "none" } };
-      }
-    }
-  }
+  const { config: finalConfig } = await resolveCheckout(ctx, {
+    config,
+    product,
+    wantsCheckout: input.enableCheckout !== false,
+    warnings,
+  });
 
   const outputDir = join(
     ctx.storesDir,
@@ -177,23 +155,18 @@ export async function regenerateStore(
   const config =
     configPatch === undefined ? existing.config : parseConfig(configPatch);
 
-  let finalConfig = config;
-  if (config.checkout.provider === "stripe" && !config.checkout.paymentLinkUrl) {
-    const secretKey = ctx.data.settings.readSecret("stripe_secret_key");
-    if (!secretKey) {
-      warnings.push({
-        code: "MISSING_STRIPE_KEY",
-        message: "Checkout is still not connected — add your Stripe secret key.",
-      });
-      finalConfig = { ...config, checkout: { ...config.checkout, provider: "none" } };
-    } else {
-      const checkout = await provisionStripeCheckout(config, existing.product, {
-        secretKey,
-        ...(ctx.fetchImpl ? { fetchImpl: ctx.fetchImpl } : {}),
-      });
-      finalConfig = { ...config, checkout };
-    }
-  }
+  // Same gate as creation: a regenerate must never quietly upgrade a free
+  // store into one that takes money, or downgrade a paid one.
+  const needsProvisioning =
+    config.checkout.provider !== "stripe" || !config.checkout.paymentLinkUrl;
+  const { config: finalConfig } = needsProvisioning
+    ? await resolveCheckout(ctx, {
+        config,
+        product: existing.product,
+        wantsCheckout: config.checkout.provider !== "none",
+        warnings,
+      })
+    : { config };
 
   const outputDir =
     existing.outputDir ??
@@ -209,6 +182,47 @@ export async function regenerateStore(
   if (!store) throw new AppError("NOT_FOUND", "That store no longer exists.");
 
   return { store, warnings };
+}
+
+/**
+ * Applies a theme to an already-generated store.
+ *
+ * Only the theme and the data island are rewritten, so an Astro dev server
+ * watching the folder hot-reloads the preview instead of restarting. Checkout
+ * is deliberately untouched: a theme change must not be able to move a store
+ * between tiers.
+ */
+export async function updateStoreTheme(
+  ctx: AppContext,
+  id: string,
+  theme: unknown,
+): Promise<Store> {
+  const existing = requireStore(ctx, id);
+  const now = nowOf(ctx);
+
+  const parsedTheme = ThemeSchema.safeParse(theme);
+  if (!parsedTheme.success) {
+    const first = parsedTheme.error.issues[0];
+    throw new AppError(
+      "VALIDATION_FAILED",
+      first ? `theme.${first.path.join(".")}: ${first.message}` : "Invalid theme.",
+    );
+  }
+
+  const config: StoreConfig = { ...existing.config, theme: parsedTheme.data };
+
+  if (!existing.outputDir) {
+    throw new AppError(
+      "VALIDATION_FAILED",
+      "Generate the store before changing its theme.",
+    );
+  }
+
+  await generateAndWriteSite(config, existing.product, existing.outputDir, { now });
+
+  const updated = ctx.data.stores.update(id, { config }, now.toISOString());
+  if (!updated) throw new AppError("NOT_FOUND", "That store no longer exists.");
+  return updated;
 }
 
 export function listStores(ctx: AppContext): Store[] {
@@ -243,4 +257,85 @@ function parseConfig(raw: unknown): StoreConfig {
     );
   }
   return parsed.data;
+}
+
+/**
+ * Decides what checkout a generated store gets.
+ *
+ * **This is the tier gate, and it is the only place it lives.** Taking payment
+ * is a premium feature; free stores capture a waitlist instead, which for
+ * product validation is arguably the better signal anyway. A free user who has
+ * saved a Stripe key still gets a waitlist — the key is theirs, but the feature
+ * is what is being sold.
+ */
+async function resolveCheckout(
+  ctx: AppContext,
+  {
+    config,
+    product,
+    wantsCheckout,
+    warnings,
+  }: {
+    config: StoreConfig;
+    product: NormalizedProduct;
+    wantsCheckout: boolean;
+    warnings: CreateStoreResult["warnings"];
+  },
+): Promise<{ config: StoreConfig }> {
+  const asWaitlist = (): { config: StoreConfig } => ({
+    config: {
+      ...config,
+      checkout: { ...config.checkout, provider: "waitlist", paymentLinkUrl: null },
+    },
+  });
+
+  if (!wantsCheckout || config.checkout.provider === "none") {
+    return { config };
+  }
+
+  const tier = effectiveTier(
+    ctx.data.users.ensureLocalUser().tier,
+    ctx.data.users.ensureLocalUser().premiumUntil,
+    nowOf(ctx),
+  );
+
+  if (tier !== "premium") {
+    if (config.checkout.provider === "stripe") {
+      warnings.push({
+        code: "PREMIUM_REQUIRED",
+        message:
+          "Stripe checkout is a premium feature. This store captures a waitlist instead — upgrade and regenerate to take payments.",
+      });
+    }
+    return asWaitlist();
+  }
+
+  if (config.checkout.provider !== "stripe") return { config };
+
+  const secretKey = ctx.data.settings.readSecret("stripe_secret_key");
+  if (!secretKey) {
+    warnings.push({
+      code: "MISSING_STRIPE_KEY",
+      message:
+        "Add your Stripe secret key in Settings to take payments. This store captures a waitlist for now.",
+    });
+    return asWaitlist();
+  }
+
+  try {
+    const checkout = await provisionStripeCheckout(config, product, {
+      secretKey,
+      ...(ctx.fetchImpl ? { fetchImpl: ctx.fetchImpl } : {}),
+    });
+    return { config: { ...config, checkout } };
+  } catch (cause) {
+    warnings.push({
+      code: cause instanceof AppError ? cause.code : "STRIPE_REQUEST_FAILED",
+      message:
+        cause instanceof AppError
+          ? cause.message
+          : "Couldn't set up Stripe checkout; the store captures a waitlist instead.",
+    });
+    return asWaitlist();
+  }
 }

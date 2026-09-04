@@ -6,6 +6,7 @@ import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import type { Hono } from "hono";
 import { createBrowserPageSource, type BrowserPageSource } from "./browser-source.js";
 import { createCipher } from "./cipher.js";
+import { PreviewServer } from "./preview-server.js";
 
 /** Vite dev server, when running `npm run dev`. */
 const DEV_SERVER_URL = process.env.DSV_DEV_SERVER_URL;
@@ -15,6 +16,7 @@ let data: DataLayer | undefined;
 let api: Hono | undefined;
 let window: BrowserWindow | undefined;
 let pageSource: BrowserPageSource | undefined;
+let previews: PreviewServer | undefined;
 
 function bootstrap(): {
   api: Hono;
@@ -192,6 +194,26 @@ function registerIpc(): void {
     openExternal(typeof url === "string" ? url : ""),
   );
 
+  // Preview: an Astro dev server per store, serving the real generated site.
+  ipcMain.handle(
+    "preview:start",
+    async (_event, payload: { storeId: string; projectDir: string }) => {
+      if (!previews) throw new Error("Preview server is not ready");
+      const handle = await previews.start(payload.storeId, payload.projectDir);
+      return { url: handle.url };
+    },
+  );
+
+  ipcMain.handle("preview:stop", async (_event, storeId: string) => {
+    await previews?.stop(String(storeId));
+    return true;
+  });
+
+  ipcMain.handle("preview:status", (_event, storeId: string) => {
+    const handle = previews?.get(String(storeId));
+    return handle ? { url: handle.url } : null;
+  });
+
   ipcMain.handle("app:info", () => ({
     version: app.getVersion(),
     platform: process.platform,
@@ -217,6 +239,7 @@ if (!app.requestSingleInstanceLock()) {
     data = started.data;
     pageSource = started.pageSource;
 
+    previews = new PreviewServer();
     registerIpc();
     window = createWindow();
 
@@ -233,6 +256,8 @@ if (!app.requestSingleInstanceLock()) {
 
 
   app.on("before-quit", () => {
+    // Dev servers are daemons; without this they outlive the app.
+    void previews?.stopAll();
     pageSource?.dispose();
     pageSource = undefined;
     data?.close();

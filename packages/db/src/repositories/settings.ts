@@ -6,6 +6,7 @@ import { last4, type SecretCipher } from "../crypto.js";
 export const SECRET_NAMES = [
   "openrouter_api_key",
   "stripe_secret_key",
+  "license_key",
   "deploy_token_vercel",
   "deploy_token_netlify",
 ] as const;

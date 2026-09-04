@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Store } from "@repo/shared";
 import { ApiError, api, desktop } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
+import { Preview } from "./Preview.js";
 
 interface DeployInstructions {
   provider: string;
@@ -19,6 +20,7 @@ export function Stores({ reloadKey }: { reloadKey: number }) {
   const [loading, setLoading] = useState(true);
   const [instructions, setInstructions] = useState<DeployInstructions | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState<Store | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -55,6 +57,17 @@ export function Stores({ reloadKey }: { reloadKey: number }) {
       setError(cause as ApiError);
     }
   };
+
+  if (previewing) {
+    const current = stores.find((s) => s.id === previewing.id) ?? previewing;
+    return (
+      <Preview
+        store={current}
+        onClose={() => setPreviewing(null)}
+        onChanged={() => void load()}
+      />
+    );
+  }
 
   return (
     <div className="stack">
@@ -95,8 +108,11 @@ export function Stores({ reloadKey }: { reloadKey: number }) {
                 </td>
                 <td style={{ maxWidth: 260 }}>{store.product.title}</td>
                 <td>
-                  {store.config.checkout.paymentLinkUrl ? (
+                  {store.config.checkout.provider === "stripe" &&
+                  store.config.checkout.paymentLinkUrl ? (
                     <span className="tag tag-accent">Stripe</span>
+                  ) : store.config.checkout.provider === "waitlist" ? (
+                    <span className="tag tag-outline">Waitlist</span>
                   ) : (
                     <span className="tag tag-neutral">None</span>
                   )}
@@ -106,6 +122,15 @@ export function Stores({ reloadKey }: { reloadKey: number }) {
                 </td>
                 <td>
                   <div className="inline-actions">
+                    {store.outputDir && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setPreviewing(store)}
+                      >
+                        Preview
+                      </button>
+                    )}
                     {store.outputDir && (
                       <button
                         type="button"

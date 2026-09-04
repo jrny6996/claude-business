@@ -23,6 +23,8 @@ export interface AppContext {
   pageSource?: PageSource;
   /** Injected so generated output and timestamps are deterministic in tests. */
   now?: () => Date;
+  /** Overrides the built-in licence public key. Set by tests. */
+  licensePublicKeyPem?: string;
 }
 
 export const nowOf = (ctx: AppContext): Date =>

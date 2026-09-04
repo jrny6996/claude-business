@@ -121,6 +121,7 @@ export function buildStoreData(
       provider: ctx.config.checkout.provider,
       paymentLinkUrl: ctx.config.checkout.paymentLinkUrl,
       variantPaymentLinks: ctx.config.checkout.variantPaymentLinks,
+      waitlistEndpoint: ctx.config.checkout.waitlistEndpoint,
     },
     meta: {
       generatedAt: now.toISOString(),

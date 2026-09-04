@@ -1,28 +1,32 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { TierSchema } from "@repo/shared";
 import type { AppContext } from "../context.js";
-import { applyLicense, getLicenseStatus } from "../services/licensing.js";
+import {
+  activateLicense,
+  deactivateLicense,
+  getLicenseStatus,
+} from "../services/licensing.js";
 import { respondWithError } from "./errors.js";
 
-const LicenseBody = z.object({
-  tier: TierSchema,
-  expiresAt: z.string().nullable().default(null),
-});
+const ActivateBody = z.object({ key: z.string().min(1) });
 
 export function licensingRoutes(ctx: AppContext): Hono {
   const app = new Hono();
 
   app.get("/", (c) => c.json({ ok: true, value: getLicenseStatus(ctx) }));
 
-  app.put("/", async (c) => {
+  // Activation takes a signed key, never a bare tier: the client is not
+  // trusted to say what it has paid for.
+  app.post("/activate", async (c) => {
     try {
-      const body = LicenseBody.parse(await c.req.json());
-      return c.json({ ok: true, value: applyLicense(ctx, body) });
+      const body = ActivateBody.parse(await c.req.json());
+      return c.json({ ok: true, value: activateLicense(ctx, body.key) });
     } catch (cause) {
       return respondWithError(c, cause);
     }
   });
+
+  app.delete("/", (c) => c.json({ ok: true, value: deactivateLicense(ctx) }));
 
   return app;
 }

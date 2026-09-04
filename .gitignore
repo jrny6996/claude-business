@@ -50,3 +50,9 @@ release/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+
+# Licence signing key for local development. The production key never lives here.
+.dev-license-private-key.pem
+
+# Astro generated cache
+.astro/

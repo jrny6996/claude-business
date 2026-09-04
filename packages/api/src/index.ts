@@ -11,6 +11,7 @@ export * from "./context.js";
 export * from "./services/settings.js";
 export * from "./services/stores.js";
 export * from "./services/licensing.js";
+export * from "./services/license-keys.js";
 export * from "./services/deploy.js";
 export * from "./services/backup.js";
 export { statusFor } from "./routes/errors.js";

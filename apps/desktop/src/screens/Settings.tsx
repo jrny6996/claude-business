@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { SettingsView } from "@repo/shared";
 import { ApiError, api, desktop } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
+import { Field } from "../components/Field.js";
 import { SecretField } from "../components/SecretField.js";
 
 /**
@@ -10,18 +11,52 @@ import { SecretField } from "../components/SecretField.js";
  * Every key here belongs to the user and is used from their machine only. The
  * copy says so explicitly — it's the product's differentiator, not a caveat.
  */
+interface LicenseStatus {
+  tier: "free" | "premium";
+  expiresAt: string | null;
+  license: {
+    hint: string;
+    email: string;
+    valid: boolean;
+    reason?: string;
+  } | null;
+}
+
 export function Settings() {
   const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
+  const [licenseKey, setLicenseKey] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     try {
-      setSettings((await api.getSettings()) as SettingsView);
+      const [nextSettings, nextLicense] = await Promise.all([
+        api.getSettings() as Promise<SettingsView>,
+        api.license() as Promise<LicenseStatus>,
+      ]);
+      setSettings(nextSettings);
+      setLicense(nextLicense);
       setError(null);
     } catch (cause) {
       setError(cause as ApiError);
+    }
+  };
+
+  const activate = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      setLicense((await api.activateLicense(licenseKey.trim())) as LicenseStatus);
+      setLicenseKey("");
+      setNotice("Licence activated.");
+      setSettings((await api.getSettings()) as SettingsView);
+    } catch (cause) {
+      setError(cause as ApiError);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -56,13 +91,15 @@ export function Settings() {
     return error ? <Banner title={error.message} /> : <div className="spinner">Loading…</div>;
   }
 
-  const isPremium = settings.profile.tier === "premium";
+  const isPremium = (license?.tier ?? settings.profile.tier) === "premium";
 
   return (
     <div className="stack">
       <div className="section-head">
         <h2>Settings</h2>
-        <span className="tag tag-outline">{settings.profile.tier}</span>
+        <span className={isPremium ? "tag tag-accent" : "tag tag-outline"}>
+          {license?.tier ?? settings.profile.tier}
+        </span>
       </div>
 
       {error && <Banner title={error.message}>{error.detail && <div className="mono">{error.detail}</div>}</Banner>}
@@ -76,10 +113,81 @@ export function Settings() {
 
       <hr className="hr" />
 
+      <h3>Licence</h3>
+      {license?.license && !license.license.valid && (
+        <Banner title={license.license.reason ?? "That licence is no longer valid."} />
+      )}
+      {isPremium ? (
+        <div className="stack-tight">
+          <p className="text-muted">
+            Premium is active
+            {license?.license?.email ? ` for ${license.license.email}` : ""}
+            {license?.expiresAt
+              ? ` until ${new Date(license.expiresAt).toLocaleDateString()}`
+              : ""}
+            .
+          </p>
+          <div className="mono">{license?.license?.hint}</div>
+          <div className="inline-actions">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  setLicense((await api.deactivateLicense()) as LicenseStatus);
+                  return api.getSettings();
+                }, "Licence removed.")
+              }
+            >
+              Remove licence
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="stack-tight">
+          <p className="text-muted">
+            Free covers unlimited store generation with waitlist capture. Premium
+            adds Stripe checkout on your generated stores and automated backups.
+          </p>
+          <Field
+            label="Licence key"
+            htmlFor="license-key"
+            hint="From your purchase receipt. Verified on this machine — it works offline."
+          >
+            <input
+              id="license-key"
+              className="input"
+              value={licenseKey}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="eyJ2IjoxLCJlbWFpbCI6…"
+              onChange={(event) => setLicenseKey(event.target.value)}
+            />
+          </Field>
+          <div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || licenseKey.trim().length === 0}
+              onClick={() => void activate()}
+            >
+              Activate
+            </button>
+          </div>
+        </div>
+      )}
+
+      <hr className="hr" />
+
       <h3>Checkout</h3>
       <SecretField
         label="Stripe secret key"
-        hint="Used once, from this machine, to create the Stripe payment link baked into each store. Never written into a generated store."
+        hint={
+          isPremium
+            ? "Used once, from this machine, to create the Stripe payment link baked into each store. Never written into a generated store."
+            : "Premium only. Free stores capture a waitlist instead of taking payment."
+        }
         placeholder="sk_live_… or sk_test_…"
         meta={settings.stripe}
         busy={busy}

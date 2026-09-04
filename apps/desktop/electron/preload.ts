@@ -31,6 +31,19 @@ const bridge = {
       isDev: boolean;
     }>;
   },
+  startPreview(storeId: string, projectDir: string): Promise<{ url: string }> {
+    return ipcRenderer.invoke("preview:start", { storeId, projectDir }) as Promise<{
+      url: string;
+    }>;
+  },
+  stopPreview(storeId: string): Promise<boolean> {
+    return ipcRenderer.invoke("preview:stop", storeId) as Promise<boolean>;
+  },
+  previewStatus(storeId: string): Promise<{ url: string } | null> {
+    return ipcRenderer.invoke("preview:status", storeId) as Promise<{
+      url: string;
+    } | null>;
+  },
   /**
    * Notifies the UI that AliExpress is asking a human to clear a check. Only
    * the main process can emit these; the renderer can only listen.
