@@ -57,11 +57,30 @@ describe("SettingsViewSchema", () => {
         createdAt: "2026-09-04T00:00:00.000Z",
       },
       openRouter: { present: true, last4: "ab12" },
+      gemini: { present: false, last4: null },
       stripe: { present: false, last4: null },
       deployTokens: {},
       backupEnabled: false,
     });
     expect(parsed.openRouter.present).toBe(true);
     expect(Object.keys(parsed.openRouter)).not.toContain("key");
+    expect(Object.keys(parsed.gemini)).not.toContain("key");
+  });
+
+  it("defaults AI settings to OpenRouter with no model overrides", () => {
+    const parsed = SettingsViewSchema.parse({
+      profile: {
+        id: "u1",
+        tier: "free",
+        createdAt: "2026-09-04T00:00:00.000Z",
+      },
+      openRouter: { present: false, last4: null },
+      gemini: { present: false, last4: null },
+      stripe: { present: false, last4: null },
+      deployTokens: {},
+      backupEnabled: false,
+    });
+
+    expect(parsed.ai).toEqual({ provider: "openrouter", models: {} });
   });
 });

@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createApp, type AppContext } from "@repo/api";
+import { AppError, toAppError } from "@repo/shared";
 import { createDataLayer, type DataLayer } from "@repo/db";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import type { Hono } from "hono";
 import { createBrowserPageSource, type BrowserPageSource } from "./browser-source.js";
 import { createCipher } from "./cipher.js";
+import { DevEnvManager } from "./dev-env.js";
 import { PreviewServer } from "./preview-server.js";
 
 /** Vite dev server, when running `npm run dev`. */
@@ -17,6 +19,7 @@ let api: Hono | undefined;
 let window: BrowserWindow | undefined;
 let pageSource: BrowserPageSource | undefined;
 let previews: PreviewServer | undefined;
+let devEnv: DevEnvManager | undefined;
 
 function bootstrap(): {
   api: Hono;
@@ -132,6 +135,17 @@ async function openExternal(rawUrl: string): Promise<boolean> {
   }
 }
 
+/** Wraps a handler so failures cross IPC as a readable error, not a stack. */
+async function envelope<T>(
+  run: () => Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; error: ReturnType<typeof toAppError> }> {
+  try {
+    return { ok: true, value: await run() };
+  } catch (cause) {
+    return { ok: false, error: toAppError(cause) };
+  }
+}
+
 /**
  * Bridges renderer requests into the Hono app.
  *
@@ -214,6 +228,39 @@ function registerIpc(): void {
     return handle ? { url: handle.url } : null;
   });
 
+  // Dev environment: turn a generated store into a project the user can open
+  // in their own editor and run with their own npm.
+  //
+  // These answer with the same `{ ok, value | error }` envelope the API uses.
+  // A thrown error crossing `ipcMain.handle` reaches the renderer wrapped in
+  // Electron's own "Error invoking remote method" text, which would bury the
+  // message the user actually needs to read.
+  ipcMain.handle(
+    "devenv:status",
+    (_event, payload: { storeId: string; projectDir: string }) =>
+      envelope(async () => {
+        if (!devEnv) throw new AppError("INTERNAL", "The app isn't ready yet.");
+        return devEnv.status(String(payload.storeId), String(payload.projectDir));
+      }),
+  );
+
+  ipcMain.handle(
+    "devenv:install",
+    (_event, payload: { storeId: string; projectDir: string }) =>
+      envelope(async () => {
+        if (!devEnv) throw new AppError("INTERNAL", "The app isn't ready yet.");
+
+        const storeId = String(payload.storeId);
+        // The preview's dev server is running out of the shared runtime we are
+        // about to unlink; leaving it up would break it mid-install.
+        await previews?.stop(storeId);
+
+        return devEnv.install(storeId, String(payload.projectDir), (event) => {
+          window?.webContents.send("devenv:progress", event);
+        });
+      }),
+  );
+
   ipcMain.handle("app:info", () => ({
     version: app.getVersion(),
     platform: process.platform,
@@ -240,6 +287,7 @@ if (!app.requestSingleInstanceLock()) {
     pageSource = started.pageSource;
 
     previews = new PreviewServer();
+    devEnv = new DevEnvManager();
     registerIpc();
     window = createWindow();
 

@@ -7,7 +7,14 @@ const FONT_STACKS: Record<string, string> = {
   mono: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
 };
 
-interface Preset {
+/**
+ * The visual identity of a storefront preset.
+ *
+ * Exported because the desktop app draws a miniature of each preset in its
+ * theme picker. Reading the real values keeps those swatches from drifting
+ * away from what the generated store actually looks like.
+ */
+export interface Preset {
   radius: string;
   surface: string;
   ink: string;
@@ -17,7 +24,7 @@ interface Preset {
   headingTracking: string;
 }
 
-const PRESETS: Record<string, Preset> = {
+export const THEME_PRESET_TOKENS: Record<string, Preset> = {
   minimal: {
     radius: "10px",
     surface: "#ffffff",
@@ -66,7 +73,9 @@ const PRESETS: Record<string, Preset> = {
 };
 
 /** Presets a storefront can be built with, for the app's theme picker. */
-export const THEME_PRESETS = Object.keys(PRESETS) as (keyof typeof PRESETS)[];
+export const THEME_PRESETS = Object.keys(
+  THEME_PRESET_TOKENS,
+) as (keyof typeof THEME_PRESET_TOKENS)[];
 
 /** True when a preset's ground is dark, so the picker can preview it honestly. */
 export function isDarkPreset(preset: string): boolean {
@@ -76,7 +85,7 @@ export function isDarkPreset(preset: string): boolean {
 /** Theme tokens are the only generated CSS; the rest of the sheet is constant. */
 export function themeCss(ctx: SiteContext): string {
   const { accentColor, fontStack, preset } = ctx.config.theme;
-  const tokens = PRESETS[preset] ?? PRESETS.minimal!;
+  const tokens = THEME_PRESET_TOKENS[preset] ?? THEME_PRESET_TOKENS.minimal!;
   const font = FONT_STACKS[fontStack] ?? FONT_STACKS.system!;
 
   return `:root {

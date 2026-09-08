@@ -1,19 +1,28 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { DeployProviderSchema } from "@repo/shared";
+import { AiProviderSchema, DeployProviderSchema } from "@repo/shared";
 import { SECRET_NAMES } from "@repo/db";
 import type { AppContext } from "../context.js";
 import {
   deleteSecret,
   getSettings,
+  saveAiKey,
   saveDeployToken,
-  saveOpenRouterKey,
   saveStripeKey,
+  setAiPreferences,
   setBackupPreferences,
 } from "../services/settings.js";
 import { respondWithError } from "./errors.js";
 
 const KeyBody = z.object({ apiKey: z.string().min(1) });
+const AiKeyBody = z.object({
+  provider: AiProviderSchema,
+  apiKey: z.string().min(1),
+});
+const AiPreferencesBody = z.object({
+  provider: AiProviderSchema,
+  model: z.string().min(1).nullable().optional(),
+});
 const StripeBody = z.object({ secretKey: z.string().min(1) });
 const DeployBody = z.object({
   provider: DeployProviderSchema,
@@ -34,10 +43,41 @@ export function settingsRoutes(ctx: AppContext): Hono {
 
   app.get("/", (c) => c.json({ ok: true, value: getSettings(ctx) }));
 
+  // Kept for the original single-provider path; `/ai-key` is the general form.
   app.put("/openrouter-key", async (c) => {
     try {
       const body = KeyBody.parse(await c.req.json());
-      return c.json({ ok: true, value: await saveOpenRouterKey(ctx, body.apiKey) });
+      return c.json({
+        ok: true,
+        value: await saveAiKey(ctx, "openrouter", body.apiKey),
+      });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.put("/ai-key", async (c) => {
+    try {
+      const body = AiKeyBody.parse(await c.req.json());
+      return c.json({
+        ok: true,
+        value: await saveAiKey(ctx, body.provider, body.apiKey),
+      });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.put("/ai", async (c) => {
+    try {
+      const body = AiPreferencesBody.parse(await c.req.json());
+      return c.json({
+        ok: true,
+        value: setAiPreferences(ctx, {
+          provider: body.provider,
+          ...(body.model === undefined ? {} : { model: body.model }),
+        }),
+      });
     } catch (cause) {
       return respondWithError(c, cause);
     }

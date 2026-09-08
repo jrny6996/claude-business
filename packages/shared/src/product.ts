@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 /**
  * Normalized product data.
  *
@@ -7,9 +5,35 @@ import { z } from "zod";
  * and the site-emitting half. Nothing downstream of a scrape may depend on
  * AliExpress page structure — it may only depend on this shape.
  */
+import { z } from "zod";
+
+/**
+ * Where an image lives.
+ *
+ * Two legal shapes, and the difference matters:
+ *
+ * - An absolute `http(s)` URL — straight off the source CDN, as scraped.
+ * - A root-relative path like `/images/product-01.jpg` — the image has been
+ *   downloaded into the generated store and is served by the user's own host.
+ *
+ * The second is the end state we want: a store that hotlinks a marketplace CDN
+ * isn't one the user owns. Nothing is re-hosted by *us* in either case — the
+ * download happens on the user's machine, into the user's project.
+ */
+export const ImageSrcSchema = z.union([
+  z.url({ protocol: /^https?$/ }),
+  z
+    .string()
+    .regex(
+      /^\/[A-Za-z0-9._~\-/]*$/,
+      "expected an absolute URL or a root-relative path",
+    )
+    // `..` in a path the storefront writes into an <img> src is never right.
+    .refine((value) => !value.includes(".."), "path must not contain .."),
+]);
+
 export const ProductImageSchema = z.object({
-  /** Absolute URL on the source CDN. We never re-host or transcode these. */
-  url: z.url(),
+  url: ImageSrcSchema,
   alt: z.string().default(""),
 });
 export type ProductImage = z.infer<typeof ProductImageSchema>;

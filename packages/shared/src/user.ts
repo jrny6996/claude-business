@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AiSettingsSchema } from "./ai.js";
 
 export const TierSchema = z.enum(["free", "premium"]);
 export type Tier = z.infer<typeof TierSchema>;
@@ -34,6 +35,10 @@ export const SettingsViewSchema = z.object({
   profile: UserProfileSchema,
   /** BYOK: the user's own OpenRouter key. We never proxy inference. */
   openRouter: SecretMetadataSchema,
+  /** BYOK: the user's own Google Gemini key. Same rule, second provider. */
+  gemini: SecretMetadataSchema,
+  /** Which AI provider to use, and the model chosen for each. */
+  ai: AiSettingsSchema.prefault({}),
   /** BYOK: the user's own Stripe secret key. We never touch their payments. */
   stripe: SecretMetadataSchema,
   /** BYO hosting: the user's own deploy tokens, one per provider. */

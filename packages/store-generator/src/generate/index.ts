@@ -36,9 +36,24 @@ import {
   checkoutApiTs,
   checkoutSuccessAstro,
 } from "./templates/checkout-api.js";
+import {
+  developmentMd,
+  editorconfig,
+  envExample,
+  nvmrc,
+} from "./templates/dev-env.js";
 import { globalCss, themeCss, waitlistCss } from "./templates/styles.js";
 
 export * from "./context.js";
+// The desktop app draws a miniature of each preset in its theme picker; reading
+// the real tokens keeps those swatches from drifting from the generated store.
+export {
+  THEME_PRESETS,
+  THEME_PRESET_TOKENS,
+  isDarkPreset,
+  readableInk,
+  type Preset,
+} from "./templates/styles.js";
 
 export interface GenerateOptions {
   /** Injected in tests so generated output is byte-for-byte reproducible. */
@@ -66,6 +81,13 @@ export function generateSite(
     { path: "tsconfig.json", contents: tsconfig() },
     { path: ".gitignore", contents: gitignore() },
     { path: "README.md", contents: readme(ctx) },
+    // The store is the user's own project, so it ships the things a project
+    // needs: a pinned Node version, editor settings, and the env file the
+    // checkout endpoint reads. See templates/dev-env.ts.
+    { path: "DEVELOPMENT.md", contents: developmentMd(ctx) },
+    { path: ".nvmrc", contents: nvmrc() },
+    { path: ".editorconfig", contents: editorconfig() },
+    { path: ".env.example", contents: envExample(ctx) },
     { path: "public/robots.txt", contents: robotsTxt() },
     { path: "public/favicon.svg", contents: faviconSvg() },
     {

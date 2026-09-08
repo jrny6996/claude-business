@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Aes256GcmCipher, createDataLayer, type DataLayer } from "@repo/db";
 import { generateLicenseKeyPair, signLicensePayload } from "./services/license-keys.js";
-import type { FetchLike } from "@repo/store-generator";
+import type { BinaryFetchLike, FetchLike } from "@repo/store-generator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "./context.js";
 import { createApp } from "./index.js";
@@ -23,8 +23,8 @@ window.runParams = {
 </script></head><body></body></html>`;
 
 /**
- * One fake fetch standing in for AliExpress, OpenRouter and Stripe, so the
- * whole API can be exercised without a network or a real key anywhere.
+ * One fake fetch standing in for AliExpress, OpenRouter, Gemini and Stripe, so
+ * the whole API can be exercised without a network or a real key anywhere.
  */
 function fakeFetch(): { fetchImpl: FetchLike; calls: string[] } {
   const calls: string[] = [];
@@ -58,6 +58,27 @@ function fakeFetch(): { fetchImpl: FetchLike; calls: string[] } {
         ],
       });
     }
+    if (url.includes("generativelanguage.googleapis.com")) {
+      if (url.includes("/models?")) return reply({ models: [] });
+      // Unknown models 404, the way Google's API does — so a test that claims
+      // to exercise a provider failure actually gets one.
+      if (!/\/models\/gemini-[\w.-]+:generateContent/.test(url)) {
+        return reply({ error: { status: "NOT_FOUND" } }, false, 404);
+      }
+      return reply({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: '{"description":"Gemini copy.","highlights":["Gemini bullet"],"alt":["Gemini alt"]}',
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
     if (url.endsWith("/v1/products")) return reply({ id: "prod_1" });
     if (url.includes("/v1/products?")) return reply({ data: [] });
     if (url.endsWith("/v1/prices")) return reply({ id: "price_1" });
@@ -71,10 +92,47 @@ function fakeFetch(): { fetchImpl: FetchLike; calls: string[] } {
   return { fetchImpl, calls };
 }
 
+/** A one-pixel JPEG, so image downloads in tests never touch a CDN. */
+const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+function fakeAssetFetch(): {
+  assetFetchImpl: BinaryFetchLike;
+  calls: string[];
+  fail: (url: string) => void;
+} {
+  const calls: string[] = [];
+  const failing = new Set<string>();
+
+  const assetFetchImpl = (async (url: string) => {
+    calls.push(url);
+    if (failing.has(url)) {
+      return {
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-type" ? "image/jpeg" : null,
+      },
+      arrayBuffer: async () =>
+        JPEG_BYTES.buffer.slice(0, JPEG_BYTES.byteLength) as ArrayBuffer,
+    };
+  }) as BinaryFetchLike;
+
+  return { assetFetchImpl, calls, fail: (url) => failing.add(url) };
+}
+
 interface Harness {
   ctx: AppContext;
   data: DataLayer;
   storesDir: string;
+  assets: ReturnType<typeof fakeAssetFetch>;
   request(method: string, path: string, body?: unknown): Promise<{
     status: number;
     payload: { ok: boolean; value?: unknown; error?: { code: string; message: string } };
@@ -111,11 +169,13 @@ beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "dsv-api-"));
   const data = createDataLayer(":memory:", new Aes256GcmCipher(randomBytes(32)));
   const { fetchImpl } = fakeFetch();
+  const assets = fakeAssetFetch();
 
   const ctx: AppContext = {
     data,
     storesDir: join(tempRoot, "stores"),
     fetchImpl,
+    assetFetchImpl: assets.assetFetchImpl,
     now: () => new Date("2026-09-04T12:00:00.000Z"),
     licensePublicKeyPem: issuer.publicKeyPem,
   };
@@ -125,6 +185,7 @@ beforeEach(() => {
   harness = {
     ctx,
     data,
+    assets,
     storesDir: ctx.storesDir,
     async request(method, path, body) {
       const init: RequestInit = { method };
@@ -225,6 +286,83 @@ describe("settings", () => {
       "/api/settings/secrets/not_a_secret",
     );
     expect(status).toBe(400);
+  });
+
+  describe("AI providers", () => {
+    it("validates and stores a Gemini key under its own name", async () => {
+      const { status, payload } = await harness.request("PUT", "/api/settings/ai-key", {
+        provider: "gemini",
+        apiKey: "AIzaTestKey1234",
+      });
+
+      expect(status).toBe(200);
+      expect((payload.value as { gemini: { present: boolean } }).gemini.present).toBe(
+        true,
+      );
+      expect(harness.data.settings.readSecret("gemini_api_key")).toBe(
+        "AIzaTestKey1234",
+      );
+      // Storing one provider's key must not disturb the other's.
+      expect(harness.data.settings.readSecret("openrouter_api_key")).toBeNull();
+    });
+
+    it("never returns a Gemini key to the renderer", async () => {
+      harness.data.settings.writeSecret("gemini_api_key", "AIzaSUPERSECRET9876");
+
+      const { payload } = await harness.request("GET", "/api/settings");
+      const serialised = JSON.stringify(payload);
+
+      expect(serialised).not.toContain("AIzaSUPERSECRET9876");
+      expect(serialised).toContain('"last4":"9876"');
+    });
+
+    it("defaults to OpenRouter", async () => {
+      const { payload } = await harness.request("GET", "/api/settings");
+      expect((payload.value as { ai: { provider: string } }).ai.provider).toBe(
+        "openrouter",
+      );
+    });
+
+    it("switches provider and remembers a model per provider", async () => {
+      await harness.request("PUT", "/api/settings/ai", {
+        provider: "gemini",
+        model: "gemini-3-pro",
+      });
+      const { payload } = await harness.request("PUT", "/api/settings/ai", {
+        provider: "openrouter",
+        model: "anthropic/claude-sonnet-5",
+      });
+
+      const ai = (payload.value as { ai: { provider: string; models: Record<string, string> } })
+        .ai;
+      expect(ai.provider).toBe("openrouter");
+      expect(ai.models).toEqual({
+        gemini: "gemini-3-pro",
+        openrouter: "anthropic/claude-sonnet-5",
+      });
+    });
+
+    // Switching provider is a preference, not a key operation — it must never
+    // delete or expose the key belonging to the provider being switched away
+    // from.
+    it("keeps both keys when the provider changes", async () => {
+      harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-keep");
+      harness.data.settings.writeSecret("gemini_api_key", "AIzaKeep");
+
+      await harness.request("PUT", "/api/settings/ai", { provider: "gemini" });
+
+      expect(harness.data.settings.readSecret("openrouter_api_key")).toBe(
+        "sk-or-v1-keep",
+      );
+      expect(harness.data.settings.readSecret("gemini_api_key")).toBe("AIzaKeep");
+    });
+
+    it("rejects a provider it doesn't know", async () => {
+      const { status } = await harness.request("PUT", "/api/settings/ai", {
+        provider: "definitely-not-a-provider",
+      });
+      expect(status).toBe(400);
+    });
   });
 
   it("gates backup preferences behind premium", async () => {
@@ -576,6 +714,185 @@ describe("store creation", () => {
     );
     expect(data.product.description).toBe("Rewritten copy.");
     expect(data.product.highlights).toEqual(["AI bullet"]);
+  });
+
+  it("routes AI copy through Gemini when that is the chosen provider", async () => {
+    harness.data.settings.writeSecret("gemini_api_key", "AIzaTestKey");
+    await harness.request("PUT", "/api/settings/ai", { provider: "gemini" });
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      useAiCopy: true,
+    });
+    const result = payload.value as {
+      store: { outputDir: string };
+      warnings: { code: string }[];
+    };
+
+    expect(result.warnings).toEqual([]);
+    const { readFileSync } = await import("node:fs");
+    const data = JSON.parse(
+      readFileSync(join(result.store.outputDir, "src/data/store.json"), "utf8"),
+    );
+    expect(data.product.description).toBe("Gemini copy.");
+  });
+
+  // The provider preference decides which key is read. An OpenRouter key on
+  // disk must not quietly satisfy a request configured for Gemini.
+  it("warns about the selected provider's key, not whichever key exists", async () => {
+    harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-abcd1234");
+    await harness.request("PUT", "/api/settings/ai", { provider: "gemini" });
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      useAiCopy: true,
+    });
+    const result = payload.value as { warnings: { code: string }[] };
+
+    expect(result.warnings.map((w) => w.code)).toContain("MISSING_GEMINI_KEY");
+  });
+
+  it("generates image alt text when asked", async () => {
+    harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-abcd1234");
+
+    const { payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      useAiAltText: true,
+    });
+    const result = payload.value as { store: { outputDir: string } };
+
+    const { readFileSync } = await import("node:fs");
+    const data = JSON.parse(
+      readFileSync(join(result.store.outputDir, "src/data/store.json"), "utf8"),
+    );
+    // The stubbed model returns no `alt` array, so every image must still end
+    // up with the title rather than an empty alt attribute.
+    expect(data.product.images.length).toBeGreaterThan(0);
+    for (const image of data.product.images) {
+      expect(image.alt).toBeTruthy();
+    }
+  });
+
+  it("still generates a store when the AI provider is down", async () => {
+    harness.data.settings.writeSecret("gemini_api_key", "AIzaTestKey");
+    // A model the provider doesn't have — the fake fetch 404s it, as Google does.
+    await harness.request("PUT", "/api/settings/ai", {
+      provider: "gemini",
+      model: "no-such-model",
+    });
+
+    const { status, payload } = await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      useAiCopy: true,
+    });
+    const result = payload.value as {
+      store: { status: string; outputDir: string };
+      warnings: { code: string }[];
+    };
+
+    // The store is the deliverable; AI is an optional garnish on top of it.
+    expect(status).toBe(200);
+    expect(result.store.status).toBe("generated");
+    expect(existsSync(join(result.store.outputDir, "src/pages/index.astro"))).toBe(true);
+    expect(result.warnings.map((w) => w.code)).toContain("GEMINI_REQUEST_FAILED");
+    expect(result.warnings[0]?.message).toMatch(/isn't available to your key/i);
+  });
+
+  describe("product assets", () => {
+    it("downloads the images into the store instead of hotlinking AliExpress", async () => {
+      const { payload } = await harness.request("POST", "/api/stores", baseBody);
+      const result = payload.value as {
+        store: { outputDir: string };
+        warnings: { code: string }[];
+      };
+
+      expect(result.warnings).toEqual([]);
+      expect(harness.assets.calls).toContain("https://ae01.alicdn.com/kf/a.jpg");
+      expect(
+        existsSync(join(result.store.outputDir, "public/images/product-01.jpg")),
+      ).toBe(true);
+
+      const { readFileSync } = await import("node:fs");
+      const data = JSON.parse(
+        readFileSync(join(result.store.outputDir, "src/data/store.json"), "utf8"),
+      );
+      for (const image of data.product.images) {
+        expect(image.url).toMatch(/^\/images\//);
+        expect(image.url).not.toContain("alicdn.com");
+      }
+    });
+
+    it("can be turned off, leaving the images remote", async () => {
+      const { payload } = await harness.request("POST", "/api/stores", {
+        ...baseBody,
+        bundleAssets: false,
+      });
+      const result = payload.value as { store: { outputDir: string } };
+
+      expect(harness.assets.calls).toEqual([]);
+      const { readFileSync } = await import("node:fs");
+      const data = JSON.parse(
+        readFileSync(join(result.store.outputDir, "src/data/store.json"), "utf8"),
+      );
+      expect(data.product.images[0].url).toContain("alicdn.com");
+    });
+
+    // One dead CDN image must not cost the user their store.
+    it("warns and keeps the remote URL when an image won't download", async () => {
+      harness.assets.fail("https://ae01.alicdn.com/kf/a.jpg");
+
+      const { status, payload } = await harness.request("POST", "/api/stores", baseBody);
+      const result = payload.value as {
+        store: { status: string; outputDir: string };
+        warnings: { code: string; message: string }[];
+      };
+
+      expect(status).toBe(200);
+      expect(result.store.status).toBe("generated");
+      expect(result.warnings.map((w) => w.code)).toContain("FETCH_FAILED");
+
+      const { readFileSync } = await import("node:fs");
+      const data = JSON.parse(
+        readFileSync(join(result.store.outputDir, "src/data/store.json"), "utf8"),
+      );
+      expect(data.product.images[0].url).toContain("alicdn.com");
+    });
+
+    // The row must reflect what was generated, or a regenerate rebuilds from
+    // the raw scrape and throws away rewritten copy and downloaded images.
+    it("persists the bundled paths so a regenerate doesn't undo them", async () => {
+      const created = await harness.request("POST", "/api/stores", baseBody);
+      const id = (created.payload.value as { store: { id: string } }).store.id;
+
+      const stored = harness.data.stores.findById(id);
+      expect(stored?.product.images[0]?.url).toMatch(/^\/images\//);
+
+      harness.assets.calls.length = 0;
+      const again = await harness.request("POST", `/api/stores/${id}/regenerate`);
+      const result = again.payload.value as {
+        store: { product: { images: { url: string }[] } };
+      };
+
+      // Already local, so nothing is re-downloaded.
+      expect(harness.assets.calls).toEqual([]);
+      expect(result.store.product.images[0]?.url).toMatch(/^\/images\//);
+    });
+
+    it("keeps AI-rewritten copy across a regenerate", async () => {
+      harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-abcd1234");
+
+      const created = await harness.request("POST", "/api/stores", {
+        ...baseBody,
+        useAiCopy: true,
+      });
+      const id = (created.payload.value as { store: { id: string } }).store.id;
+
+      const again = await harness.request("POST", `/api/stores/${id}/regenerate`);
+      const result = again.payload.value as {
+        store: { product: { description: string } };
+      };
+      expect(result.store.product.description).toBe("Rewritten copy.");
+    });
   });
 
   it("rejects an invalid config with a field-level message", async () => {

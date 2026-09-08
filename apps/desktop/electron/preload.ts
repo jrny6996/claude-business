@@ -44,6 +44,27 @@ const bridge = {
       url: string;
     } | null>;
   },
+  devEnvStatus(storeId: string, projectDir: string): Promise<unknown> {
+    return ipcRenderer.invoke("devenv:status", { storeId, projectDir });
+  },
+  devEnvInstall(storeId: string, projectDir: string): Promise<unknown> {
+    return ipcRenderer.invoke("devenv:install", { storeId, projectDir });
+  },
+  /**
+   * Streams `npm install` progress while a dev environment is being set up.
+   * Emitted by the main process only; the renderer can only listen.
+   */
+  onDevEnvProgress(
+    listener: (event: { storeId: string; phase: string; line: string }) => void,
+  ): () => void {
+    const onProgress = (_event: IpcRendererEvent, payload: unknown) =>
+      listener(payload as { storeId: string; phase: string; line: string });
+
+    ipcRenderer.on("devenv:progress", onProgress);
+    return () => {
+      ipcRenderer.removeListener("devenv:progress", onProgress);
+    };
+  },
   /**
    * Notifies the UI that AliExpress is asking a human to clear a check. Only
    * the main process can emit these; the renderer can only listen.

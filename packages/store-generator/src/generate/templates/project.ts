@@ -90,7 +90,13 @@ export function tsconfig(): string {
 }
 
 export function gitignore(): string {
-  return `dist/
+  // .env is listed before anything else on purpose: it is the only file here
+  // that can hold a live Stripe key, and committing it is the one mistake that
+  // actually costs the user money.
+  return `.env
+.env.*
+!.env.example
+dist/
 .astro/
 node_modules/
 .DS_Store
@@ -123,6 +129,8 @@ A static storefront generated from an AliExpress product listing.
 npm install
 npm run dev
 \`\`\`
+
+See \`DEVELOPMENT.md\` for where everything lives and how to change it.
 
 ## Build it
 
@@ -165,7 +173,7 @@ Session per order.
 **Set your Stripe secret key in your hosting environment before going live:**
 
 \`\`\`
-STRIPE_SECRET_KEY=sk_live_...
+STRIPE_SECRET_KEY=<your Stripe secret key>
 \`\`\`
 
 - Vercel: Project → Settings → Environment Variables

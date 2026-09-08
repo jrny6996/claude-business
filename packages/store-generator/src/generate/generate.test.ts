@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AppError,
+  STORE_NODE_VERSION,
   StoreConfigSchema,
   type NormalizedProduct,
   type StoreConfig,
@@ -169,9 +170,64 @@ describe("generateSite", () => {
   });
 
   it("never writes a Stripe secret key into the generated store", () => {
-    for (const file of generateSite(config, product, { now }).files) {
-      expect(file.contents).not.toMatch(/sk_live|sk_test|rk_live/);
+    // Both shapes of store: the API-mode one ships a .env.example that talks
+    // about the key, so it is the one most likely to grow a key-shaped
+    // placeholder by accident.
+    const apiMode = StoreConfigSchema.parse({
+      ...config,
+      deployTarget: "vercel",
+      checkout: { provider: "stripe", mode: "api" },
+    });
+
+    for (const variant of [config, apiMode]) {
+      for (const file of generateSite(variant, product, { now }).files) {
+        expect(file.contents).not.toMatch(/sk_live|sk_test|rk_live/);
+      }
     }
+  });
+
+  describe("developer environment", () => {
+    it("ships the files a project needs to be worked on", () => {
+      const files = fileMap();
+      expect(files.has("DEVELOPMENT.md")).toBe(true);
+      expect(files.has(".nvmrc")).toBe(true);
+      expect(files.has(".editorconfig")).toBe(true);
+      expect(files.has(".env.example")).toBe(true);
+    });
+
+    it("gitignores .env while keeping .env.example", () => {
+      const ignore = fileMap().get(".gitignore") as string;
+      expect(ignore).toContain(".env\n");
+      expect(ignore).toContain("!.env.example");
+      expect(ignore).toContain("node_modules/");
+    });
+
+    it("pins the Node version the store actually needs", () => {
+      expect(fileMap().get(".nvmrc")?.trim()).toBe(STORE_NODE_VERSION);
+    });
+
+    // A static store has no server-side secret, so telling the user to set one
+    // would be an invented requirement.
+    it("only asks for a Stripe key when the store has an endpoint to use it", () => {
+      expect(fileMap().get(".env.example")).not.toContain("STRIPE_SECRET_KEY");
+
+      const apiMode = StoreConfigSchema.parse({
+        ...config,
+        deployTarget: "vercel",
+        checkout: { provider: "stripe", mode: "api" },
+      });
+      const files = new Map(
+        generateSite(apiMode, product, { now }).files.map((f) => [f.path, f.contents]),
+      );
+      expect(files.get(".env.example")).toContain("STRIPE_SECRET_KEY=");
+    });
+
+    // The preview links a shared runtime in as node_modules; a user who copies
+    // the folder without reinstalling gets a dangling link and no explanation.
+    it("warns that the preview's linked node_modules is not portable", () => {
+      expect(fileMap().get("DEVELOPMENT.md")).toMatch(/not portable/i);
+      expect(fileMap().get("DEVELOPMENT.md")).toContain("npm install");
+    });
   });
 
   it("builds a waitlist store when that is the provider", () => {

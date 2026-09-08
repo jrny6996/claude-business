@@ -65,8 +65,10 @@ export class PreviewServer {
       );
     }
 
-    const astroBin = this.#astroBin();
+    // A store the user has set up a dev environment for has its own Astro.
+    // Preferring it means the preview runs exactly what `npm run dev` would.
     await this.#linkRuntime(projectDir);
+    const astroBin = this.#astroBinFor(projectDir);
 
     const port = this.#nextPort++;
     const { command, args, cwd } = devServerStartCommand({
@@ -109,7 +111,7 @@ export class PreviewServer {
 
     const { command, args, cwd } = devServerStopCommand(
       handle.projectDir,
-      this.#astroBin(),
+      this.#astroBinFor(handle.projectDir),
     );
 
     try {
@@ -131,6 +133,21 @@ export class PreviewServer {
 
   async stopAll(): Promise<void> {
     await Promise.all([...this.#running.keys()].map((id) => this.stop(id)));
+  }
+
+
+  /**
+   * The `astro` binary to run for a given store.
+   *
+   * The store's own `node_modules` wins when it has one — that is the whole
+   * point of setting up a dev environment, and it keeps the preview honest
+   * about what the user's own `npm run dev` would do. Otherwise we fall back to
+   * the shared runtime linked in above.
+   */
+  #astroBinFor(projectDir: string): string {
+    const own = join(projectDir, "node_modules", ".bin", "astro");
+    if (existsSync(own)) return own;
+    return this.#astroBin();
   }
 
   /**

@@ -28,6 +28,14 @@ export interface CreateStoreInput {
 
 export interface UpdateStoreInput {
   config?: StoreConfig;
+  /**
+   * The product as generated, not as scraped.
+   *
+   * AI-rewritten copy and downloaded asset paths belong in the row: without
+   * this, a regenerate would rebuild the store from the original scrape and
+   * silently throw the user's rewritten copy away.
+   */
+  product?: NormalizedProduct;
   status?: StoreStatus;
   outputDir?: string | null;
   deployedUrl?: string | null;
@@ -86,6 +94,7 @@ export class StoreRepository {
 
     const next = {
       config: patch.config ?? existing.config,
+      product: patch.product ?? existing.product,
       status: patch.status ?? existing.status,
       outputDir:
         patch.outputDir !== undefined ? patch.outputDir : existing.outputDir,
@@ -98,11 +107,13 @@ export class StoreRepository {
     this.#db
       .prepare(
         `UPDATE stores
-            SET config_json = ?, status = ?, output_dir = ?, deployed_url = ?, updated_at = ?
+            SET config_json = ?, product_json = ?, status = ?, output_dir = ?,
+                deployed_url = ?, updated_at = ?
           WHERE id = ?`,
       )
       .run(
         JSON.stringify(next.config),
+        JSON.stringify(next.product),
         next.status,
         next.outputDir,
         next.deployedUrl,

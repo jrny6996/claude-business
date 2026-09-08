@@ -5,6 +5,7 @@ import { last4, type SecretCipher } from "../crypto.js";
 /** Names of the secrets we hold. Anything not listed here has no home. */
 export const SECRET_NAMES = [
   "openrouter_api_key",
+  "gemini_api_key",
   "stripe_secret_key",
   "license_key",
   "deploy_token_vercel",

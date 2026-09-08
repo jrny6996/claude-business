@@ -1,11 +1,8 @@
 import { AppError, type NormalizedProduct } from "@repo/shared";
 import { describe, expect, it } from "vitest";
 import type { FetchLike } from "../scrape/fetch.js";
-import {
-  OpenRouterClient,
-  parseCopyResponse,
-  rewriteProductCopy,
-} from "./openrouter.js";
+import { parseCopyResponse, rewriteProductCopy } from "./copy.js";
+import { OpenRouterClient } from "./openrouter.js";
 
 const product: NormalizedProduct = {
   sourceId: "1",

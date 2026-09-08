@@ -18,6 +18,8 @@ const CreateBody = z.object({
   url: z.string().min(1),
   config: z.unknown(),
   useAiCopy: z.boolean().default(false),
+  useAiAltText: z.boolean().default(false),
+  bundleAssets: z.boolean().default(true),
   enableCheckout: z.boolean().default(true),
 });
 
