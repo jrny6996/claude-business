@@ -29,6 +29,13 @@ explicitly discussed. Two mechanisms enforce this:
 If a task description implies server-side image processing, video transcoding, or an
 AI call billed to us, stop and flag it rather than implementing it.
 
+**One deliberate exception exists**, decided explicitly by the product owner:
+hosted **backup** storage, as a paid opt-in alongside the local folder. We pay
+for that storage. It is bounded by the fact that the data is encrypted on the
+user's machine with a key we never receive, so we cannot read what we store —
+see Data & backups. That exception covers backups and nothing else: it is not a
+precedent for hosting storefronts, images, or inference.
+
 ## Checkout and tiers
 
 **Decided (explicitly, by the product owner): checkout is the premium
@@ -251,6 +258,8 @@ through `.grayscale`, and never hard-code a value the tokens already carry.
                   stripe/ (BYOK payment links), ai/ (BYOK OpenRouter + Gemini),
                   assets/ (download product images into the store), dev-env.ts
   /db             SQLite schema, migrations, repositories, secret encryption, backup
+  /cloud          Hono service we host: licence issuance (Stripe webhook) and
+                  encrypted backup storage. Deployed with the landing page.
   /shared         Zod schemas + types (product, store config, settings, Result/AppError)
   /design-system  Modernist tokens + component CSS, vendored from Claude Design.
                   Dresses the app and landing page only — NOT generated storefronts.
@@ -276,19 +285,93 @@ out of sync with reality.
 - [x] Deploy integration — token-based deploy instructions for Vercel/Netlify
       (we emit the command; the host's own CLI does the upload)
 - [x] Marketing copy on the landing page — positioning, BYOK/BYO-hosting framing
-- [ ] Pricing decision — the landing page is deliberately number-free until it's made
+- [x] Hosted licensing service — Stripe subscription → signed licence, in `packages/cloud`
+- [x] Hosted encrypted backup — paid opt-in alongside the local folder
+- [ ] Pricing decision — set `PREMIUM_PRICE_ID` in Stripe; no code change needed
 
 ## Data & backups
 
 - Each user's data lives in a local SQLite file.
-- Premium users get automated backup. **Decided: the destination is a directory the
-  user picks** — their own disk, or a cloud folder they already sync. We do not
-  upload it anywhere. This was the conservative reading of the TBD: defaulting to
-  our own storage would have quietly made us pay for user data. Implemented in
+- Premium users get automated backup to **a directory the user picks** — their own
+  disk, or a cloud folder they already sync. Implemented in
   `packages/db/src/backup.ts` via SQLite's online backup API (consistent snapshot
   under WAL, which a plain file copy would not give), with retention pruning.
-- If a hosted destination is ever agreed, add it as an explicit opt-in _alongside_
-  this, not as a replacement.
+  This remains the default.
+- **Decided (explicitly, by the product owner, reversing the earlier position):
+  hosted backup exists, as a paid opt-in _alongside_ the local folder.** We do
+  now pay to store user data. That is a real, deliberate exception to the core
+  principle above, and it is bounded by one property that must never be traded
+  away:
+
+  > **The backup is encrypted on the user's machine, with a key the service
+  > never receives.** We store ciphertext and a length. A total breach of that
+  > bucket leaks the sizes and timestamps of some backups and nothing else.
+
+  If that property ever stops holding, this feature stops being defensible —
+  it becomes us holding other people's business data in the clear, at our own
+  expense and our own risk. Do not add a server-side path that decrypts, and do
+  not "helpfully" upload the key.
+
+- `backup.destination` is `local` (default), `cloud`, or `both`. `both` is what
+  most people should pick: a hosted copy is only a backup if the local one can
+  also fail. One destination failing never cancels the other.
+- The encryption key is the user's, in `packages/db/src/backup-crypto.ts`. It is
+  **not** the keychain-backed `SecretCipher` — a backup has to be restorable on a
+  machine whose keychain has never seen this user, which is the exact situation
+  backups exist for. It is surfaced as a written-down **recovery key** over an
+  alphabet with no `0`/`O`/`1`/`I`/`L`, and a mistyped character is reported by
+  name rather than silently dropped (a silently-dropped character decodes to a
+  different valid-looking key and fails much later as "couldn't decrypt").
+- **Restores are staged, not applied in place.** `restoreCloudBackup` writes
+  `pending-restore.sqlite` beside the live database; `adoptPendingRestore` in
+  `apps/desktop/electron/main.ts` swaps it in at next boot, before any connection
+  is opened, and renames the previous database and its WAL/shm rather than
+  deleting them. Swapping a database under a running app is how you corrupt
+  someone's data while trying to rescue it.
+- Quotas and retention live server-side (`packages/cloud/src/services/backups.ts`):
+  ten backups per account, 250MB, 5MB per upload. The upload cap must stay under
+  the platform's own request-body limit — Netlify's synchronous functions stop at
+  6MB.
+
+## The hosted service
+
+`packages/cloud` is the **only** part of this product that runs on our
+infrastructure and costs us money. It is deliberately small, and it does exactly
+two things: issue licences, and store backups it cannot read.
+
+It deploys with the marketing site (`apps/landing`) as a single Netlify Function
+at `netlify/functions/api.mts`, which mounts the Hono app — the same
+`app.fetch(request)` arrangement the desktop app uses, so the whole service is
+testable with no platform in the picture. Every marketing page stays prerendered.
+
+- **No Astro adapter, on purpose.** `@astrojs/netlify` pulls Netlify's function
+  bundler in at config-load time, and that chain reads TypeScript's classic
+  `ts.TypeFlags` via `ts-api-utils` — which the native TypeScript 7 compiler this
+  repo builds with does not expose, so `astro build` dies before it starts.
+  Netlify bundles the function itself at deploy time, so nothing is lost.
+  (npm `overrides` were tried and are silently ignored in this workspace.)
+- **The licence signing key exists only here**, in `DSV_LICENSE_PRIVATE_KEY`.
+  `packages/api/src/services/license-keys.ts` ships only the verify half.
+- **The price of premium is not in the codebase.** It is a Stripe Price named by
+  `PREMIUM_PRICE_ID`; `/api/checkout/price` reads it back so the landing page can
+  show a real figure. With none configured the page says premium isn't on sale —
+  never a guessed number.
+- **Sold as an annual subscription.** `invoice.paid` re-issues; the licence id is
+  derived from the Stripe subscription id so it is *stable across renewals* — the
+  storage namespace is derived from it, and a changing id would orphan a
+  subscriber's backups once a year. Cancellation is deliberately a no-op: the
+  outstanding licence already expires at period end, and revoking early would
+  take back a period the customer paid for.
+- **Webhook signatures are verified against the raw body.** Parsing the JSON and
+  re-serialising it changes bytes and breaks verification — the route reads
+  `c.req.text()` and never `c.req.json()`. Comparison is timing-safe, with a
+  timestamp tolerance so captured requests can't be replayed.
+- **No customer database.** Stripe already has one; a second would be another
+  thing to secure, sync and delete on request. Licence recovery re-mints from the
+  live subscription, and answers identically for an address that never bought
+  anything — otherwise it is an oracle for "does this person use the product".
+- Blob keys are `backups/<sha256(licence id)>/<uuid>`: no email address and no
+  key material appears in storage listings, logs or the provider's dashboard.
 
 ## AliExpress scraping
 
@@ -398,7 +481,10 @@ context so positioning stays consistent with what the product actually does:
 - Hosting generated storefronts ourselves.
 - Proxying or subsidizing AI inference calls.
 - Building a general-purpose e-commerce platform beyond the validation use case.
-- Being in the payment path ourselves. End-customer checkout **is** in scope as of
-  the Checkout section below (confirmed explicitly, which is what this file asked
-  for), but strictly as BYOK Stripe: their key, their account, Stripe's hosted
-  page. We take no platform fee, hold no card data, and never proxy a payment.
+- Being in the payment path for **our users' customers**. End-customer checkout is
+  in scope strictly as BYOK Stripe: their key, their account, Stripe's hosted page.
+  We take no platform fee, hold no card data, and never proxy a payment. Selling
+  our own subscription through our own Stripe account is a separate thing and is
+  in scope — see The hosted service.
+- Storing user data we can read. Hosted backup exists, but only because it is
+  sealed on the user's machine first. A server-side decrypt path is out of scope.

@@ -10,6 +10,7 @@ import { ApiError, api, desktop, type LicenseStatus } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
 import { Field } from "../components/Field.js";
 import { SecretField } from "../components/SecretField.js";
+import { Backups } from "./Backups.js";
 import { useToast } from "../components/Toast.js";
 
 /**
@@ -71,12 +72,6 @@ export function Settings() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const chooseBackupDir = async () => {
-    const directory = await desktop.chooseDirectory();
-    if (!directory) return;
-    await run(() => api.setBackup(true, directory), "Backup folder saved.");
   };
 
   if (!settings) {
@@ -326,40 +321,13 @@ export function Settings() {
 
       <h3>Backups</h3>
       {isPremium ? (
-        <div className="stack-tight">
-          <p className="text-muted">
-            Backups are written to a folder you choose on your own machine — or a
-            cloud folder you already sync. Nothing is uploaded to us.
-          </p>
-          <div className="mono">{settings.backupDir ?? "No folder chosen"}</div>
-          <div className="inline-actions">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={busy}
-              onClick={() => void chooseBackupDir()}
-            >
-              Choose folder
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !settings.backupDir}
-              onClick={() =>
-                void run(async () => {
-                  await api.runBackup();
-                  return api.getSettings();
-                }, "Backup written.")
-              }
-            >
-              Back up now
-            </button>
-          </div>
-        </div>
+        <Backups settings={settings} busy={busy} onRun={run} />
       ) : (
         <Banner title="Backups are a premium feature">
-          Your data lives in a local SQLite file either way — premium adds
-          automated snapshots to a folder you pick.
+          Your data lives in a local SQLite file either way. Premium adds
+          automated snapshots to a folder you pick, and optional off-site
+          storage that's encrypted on this machine before it's uploaded — we
+          hold it and can't read it.
         </Banner>
       )}
     </div>

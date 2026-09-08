@@ -7,10 +7,18 @@ import {
   recordDeployment,
 } from "../services/deploy.js";
 import { runBackup } from "../services/backup.js";
+import {
+  deleteCloudBackup,
+  listCloudBackups,
+  recoveryKey,
+  restoreCloudBackup,
+  setRecoveryKey,
+} from "../services/cloud-backup.js";
 import { respondWithError } from "./errors.js";
 
 const ProviderQuery = z.object({ provider: DeployProviderSchema });
 const RecordBody = z.object({ deployedUrl: z.string().min(1) });
+const RecoveryKeyBody = z.object({ key: z.string().min(1) });
 
 export function deployRoutes(ctx: AppContext): Hono {
   const app = new Hono();
@@ -44,6 +52,61 @@ export function deployRoutes(ctx: AppContext): Hono {
   app.post("/backup", async (c) => {
     try {
       return c.json({ ok: true, value: await runBackup(ctx) });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  /**
+   * The backup recovery key.
+   *
+   * Its own endpoint rather than a field on the settings payload, so the key is
+   * only ever sent when the user explicitly asks to see it — not on every poll
+   * of the settings screen.
+   */
+  app.get("/backup/recovery-key", (c) => {
+    try {
+      return c.json({ ok: true, value: { key: recoveryKey(ctx) } });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.put("/backup/recovery-key", async (c) => {
+    try {
+      const body = RecoveryKeyBody.parse(await c.req.json());
+      setRecoveryKey(ctx, body.key);
+      return c.json({ ok: true, value: { ok: true } });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.get("/backup/cloud", async (c) => {
+    try {
+      return c.json({ ok: true, value: await listCloudBackups(ctx) });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.delete("/backup/cloud/:id", async (c) => {
+    try {
+      return c.json({
+        ok: true,
+        value: await deleteCloudBackup(ctx, c.req.param("id")),
+      });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.post("/backup/cloud/:id/restore", async (c) => {
+    try {
+      return c.json({
+        ok: true,
+        value: await restoreCloudBackup(ctx, c.req.param("id")),
+      });
     } catch (cause) {
       return respondWithError(c, cause);
     }

@@ -7,15 +7,22 @@
     "build": "astro build",
     "dev": "astro dev",
     "preview": "astro preview",
-    "check-types": "astro check",
+    "check-types": "tsc -p netlify/tsconfig.json",
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
+    "@netlify/blobs": "^9.1.2",
+    "@repo/cloud": "*",
     "@repo/design-system": "*",
-    "astro": "7.3.1"
+    "@repo/shared": "*",
+    "astro": "7.3.1",
+    "hono": "4.13.5"
   },
   "devDependencies": {
+    "@netlify/functions": "^4.2.9",
     "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
+    "@types/node": "26.4.1",
     "eslint": "10.9.1",
     "typescript": "7.0.2"
   }

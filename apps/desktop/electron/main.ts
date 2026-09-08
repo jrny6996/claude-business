@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { createApp, type AppContext } from "@repo/api";
+import { PENDING_RESTORE_FILE, createApp, type AppContext } from "@repo/api";
 import { AppError, toAppError } from "@repo/shared";
 import { createDataLayer, type DataLayer } from "@repo/db";
 import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
@@ -35,7 +35,10 @@ function bootstrap(): {
     );
   }
 
-  const layer = createDataLayer(join(userData, "store-validator.sqlite"), cipher);
+  const databasePath = join(userData, "store-validator.sqlite");
+  adoptPendingRestore(userData, databasePath);
+
+  const layer = createDataLayer(databasePath, cipher);
 
   // Product pages are loaded in a real Chromium window: AliExpress renders its
   // data client-side and blocks plain HTTP clients. If it challenges us, the
@@ -54,10 +57,52 @@ function bootstrap(): {
   const ctx: AppContext = {
     data: layer,
     storesDir: join(app.getPath("documents"), "Store Validator"),
+    databaseDir: userData,
     pageSource: source,
+    ...(process.env.DSV_CLOUD_URL ? { cloudBaseUrl: process.env.DSV_CLOUD_URL } : {}),
   };
 
   return { api: createApp(ctx), data: layer, pageSource: source };
+}
+
+/**
+ * Adopts a database staged by a cloud restore.
+ *
+ * Restores are applied here, at boot, before anything opens a connection —
+ * swapping the file under a running app, with WAL files beside it and
+ * statements prepared against it, is how you corrupt someone's data while
+ * trying to rescue it.
+ *
+ * The previous database is renamed rather than deleted. A restore is something
+ * people do when they are already in trouble, and it must not be the thing that
+ * destroys the copy they had.
+ */
+function adoptPendingRestore(userData: string, databasePath: string): void {
+  const pending = join(userData, PENDING_RESTORE_FILE);
+  if (!existsSync(pending)) return;
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  try {
+    if (existsSync(databasePath)) {
+      renameSync(databasePath, `${databasePath}.before-restore-${stamp}`);
+    }
+    // The WAL and shm belong to the database being replaced; leaving them would
+    // have SQLite apply another database's journal to this one.
+    for (const suffix of ["-wal", "-shm"]) {
+      if (existsSync(`${databasePath}${suffix}`)) {
+        renameSync(
+          `${databasePath}${suffix}`,
+          `${databasePath}${suffix}.before-restore-${stamp}`,
+        );
+      }
+    }
+
+    renameSync(pending, databasePath);
+    console.info("[store-validator] Restored a backup from the cloud.");
+  } catch (cause) {
+    console.error("[store-validator] Couldn't apply the staged restore.", cause);
+  }
 }
 
 function createWindow(): BrowserWindow {

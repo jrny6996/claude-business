@@ -4,9 +4,11 @@ import {
   AiProviderSchema,
   AiSettingsSchema,
   AppError,
+  BackupDestinationSchema,
   modelFor,
   type AiProvider,
   type AiSettings,
+  type BackupDestination,
   type DeployProvider,
   type SettingsView,
   type Tier,
@@ -17,6 +19,7 @@ import { nowOf, type AppContext } from "../context.js";
 
 export const BACKUP_ENABLED_KEY = "backup.enabled";
 export const BACKUP_DIR_KEY = "backup.dir";
+export const BACKUP_DESTINATION_KEY = "backup.destination";
 export const AI_PROVIDER_KEY = "ai.provider";
 /** Per-provider model override, e.g. `ai.model.gemini`. */
 export const AI_MODEL_KEY_PREFIX = "ai.model.";
@@ -54,6 +57,10 @@ export function getSettings(ctx: AppContext): SettingsView {
     },
     backupEnabled: settings.getBoolean(BACKUP_ENABLED_KEY),
     backupDir: settings.get(BACKUP_DIR_KEY),
+    backupDestination: backupDestination(ctx),
+    // Metadata only — the key itself is revealed through its own endpoint, so
+    // it is never carried by the settings payload the UI polls.
+    backupKeySet: settings.describeSecret("backup_encryption_key").present,
   };
 }
 
@@ -217,14 +224,30 @@ export function deleteSecret(
   return getSettings(ctx);
 }
 
+export function backupDestination(ctx: AppContext): BackupDestination {
+  const parsed = BackupDestinationSchema.safeParse(
+    ctx.data.settings.get(BACKUP_DESTINATION_KEY),
+  );
+  return parsed.success ? parsed.data : "local";
+}
+
 export function setBackupPreferences(
   ctx: AppContext,
-  { enabled, directory }: { enabled: boolean; directory: string | null },
+  {
+    enabled,
+    directory,
+    destination,
+  }: {
+    enabled: boolean;
+    directory: string | null;
+    destination?: BackupDestination;
+  },
 ): SettingsView {
   requirePremium(ctx, "Automated backups are a premium feature.");
 
   ctx.data.settings.setBoolean(BACKUP_ENABLED_KEY, enabled);
   if (directory !== null) ctx.data.settings.set(BACKUP_DIR_KEY, directory);
+  if (destination) ctx.data.settings.set(BACKUP_DESTINATION_KEY, destination);
 
   return getSettings(ctx);
 }

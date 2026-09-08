@@ -14,6 +14,7 @@ export * from "./services/licensing.js";
 export * from "./services/license-keys.js";
 export * from "./services/deploy.js";
 export * from "./services/backup.js";
+export * from "./services/cloud-backup.js";
 export { statusFor } from "./routes/errors.js";
 
 /**

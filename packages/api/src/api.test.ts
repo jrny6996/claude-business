@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Aes256GcmCipher, createDataLayer, type DataLayer } from "@repo/db";
@@ -8,6 +8,7 @@ import type { BinaryFetchLike, FetchLike } from "@repo/store-generator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "./context.js";
 import { createApp } from "./index.js";
+import { MemoryBlobStore, createCloudApp } from "@repo/cloud";
 
 const PRODUCT_HTML = `<!doctype html><html><head>
 <script>
@@ -174,6 +175,7 @@ beforeEach(() => {
   const ctx: AppContext = {
     data,
     storesDir: join(tempRoot, "stores"),
+    databaseDir: tempRoot,
     fetchImpl,
     assetFetchImpl: assets.assetFetchImpl,
     now: () => new Date("2026-09-04T12:00:00.000Z"),
@@ -1001,17 +1003,230 @@ describe("deploy", () => {
     expect(status).toBe(402);
   });
 
-  it("runs a backup for a premium user", async () => {
-    await harness.request("POST", "/api/license/activate", {
+  it("runs a local backup for a premium user", async () => {
+    await goPremiumWithBackupDir();
+
+    const { status, payload } = await harness.request("POST", "/api/deploy/backup");
+    const result = payload.value as { local: { bytes: number } | null };
+
+    expect(status).toBe(200);
+    expect(result.local?.bytes).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Cloud backup, exercised against the **real** hosted service.
+ *
+ * `cloudFetchImpl` is pointed at an in-process `createCloudApp`, so these run
+ * the whole path: snapshot, encrypt on this side, authenticate with a signed
+ * licence, store, list, download, decrypt. A mocked service would prove none of
+ * the parts that actually matter.
+ */
+describe("cloud backup", () => {
+  let cloudBlobs: MemoryBlobStore;
+
+  const goPremium = () =>
+    harness.request("POST", "/api/license/activate", {
       key: licenseKey({ expiresAt: null }),
     });
+
+  beforeEach(() => {
+    cloudBlobs = new MemoryBlobStore();
+
+    const cloud = createCloudApp({
+      config: {
+        premiumPriceId: "price_test",
+        siteUrl: "https://cloud.test",
+        maxUploadBytes: 5 * 1024 * 1024,
+        quotaBytes: 50 * 1024 * 1024,
+        maxBackups: 3,
+      },
+      blobs: cloudBlobs,
+      stripe: {} as never,
+      mailer: { send: async () => {} },
+      // The service verifies the licences this test harness signs.
+      licensePrivateKeyPem: issuer.privateKeyPem,
+      licensePublicKeyPem: issuer.publicKeyPem,
+      stripeWebhookSecret: "whsec_test",
+      now: () => new Date("2026-09-04T12:00:00.000Z"),
+    });
+
+    harness.ctx.cloudBaseUrl = "https://cloud.test";
+    harness.ctx.cloudFetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
+      cloud.fetch(new Request(input as string, init))) as typeof globalThis.fetch;
+  });
+
+  it("gates every cloud call behind premium", async () => {
+    const list = await harness.request("GET", "/api/deploy/backup/cloud");
+    expect(list.status).toBe(402);
+  });
+
+  it("uploads an encrypted snapshot and lists it back", async () => {
+    await goPremium();
+    await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: null,
+      destination: "cloud",
+    });
+
+    const run = await harness.request("POST", "/api/deploy/backup");
+    const result = run.payload.value as {
+      local: unknown;
+      cloud: { backup: { id: string; sizeBytes: number } } | null;
+    };
+
+    expect(run.status).toBe(200);
+    expect(result.local).toBeNull();
+    expect(result.cloud?.backup.sizeBytes).toBeGreaterThan(0);
+
+    const list = await harness.request("GET", "/api/deploy/backup/cloud");
+    expect((list.payload.value as { backups: unknown[] }).backups).toHaveLength(1);
+  });
+
+  // The entire justification for storing these on our infrastructure.
+  it("stores nothing the service could read", async () => {
+    await goPremium();
+    harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-SUPERSECRET");
+    await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: null,
+      destination: "cloud",
+    });
+
+    await harness.request("POST", "/api/deploy/backup");
+
+    const stored = await cloudBlobs.list("");
+    expect(stored).toHaveLength(1);
+
+    const blob = await cloudBlobs.get(stored[0]!.key);
+    const bytes = Buffer.from(blob!.bytes);
+    // A SQLite file starts with this; the sealed blob must not.
+    expect(bytes.subarray(0, 15).toString("latin1")).not.toContain("SQLite format");
+    expect(bytes.toString("latin1")).not.toContain("SUPERSECRET");
+    expect(bytes.toString("latin1")).not.toContain("sk-or-v1");
+  });
+
+  it("round-trips a backup through download and decryption", async () => {
+    await goPremium();
+    await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: null,
+      destination: "cloud",
+    });
+
+    const run = await harness.request("POST", "/api/deploy/backup");
+    const id = (run.payload.value as { cloud: { backup: { id: string } } }).cloud
+      .backup.id;
+
+    const restore = await harness.request(
+      "POST",
+      `/api/deploy/backup/cloud/${id}/restore`,
+    );
+    const result = restore.payload.value as { path: string; bytes: number };
+
+    expect(restore.status).toBe(200);
+    // Staged, not swapped in: the database is open and replacing it under a
+    // running app is how you corrupt data while trying to rescue it.
+    expect(result.path).toContain("pending-restore.sqlite");
+    expect(readFileSync(result.path).subarray(0, 15).toString("latin1")).toContain(
+      "SQLite format",
+    );
+  });
+
+  it("refuses to restore with the wrong recovery key", async () => {
+    await goPremium();
+    await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: null,
+      destination: "cloud",
+    });
+
+    const run = await harness.request("POST", "/api/deploy/backup");
+    const id = (run.payload.value as { cloud: { backup: { id: string } } }).cloud
+      .backup.id;
+
+    // As if restoring on a different machine that never had the original key.
+    harness.data.settings.deleteSecret("backup_encryption_key");
+
+    const restore = await harness.request(
+      "POST",
+      `/api/deploy/backup/cloud/${id}/restore`,
+    );
+    expect(restore.status).toBe(500);
+  });
+
+  it("hands back a recovery key and takes one from another machine", async () => {
+    await goPremium();
+
+    const shown = await harness.request("GET", "/api/deploy/backup/recovery-key");
+    const key = (shown.payload.value as { key: string }).key;
+    expect(key).toMatch(/^[A-Z2-9-]+$/);
+
+    const adopted = await harness.request("PUT", "/api/deploy/backup/recovery-key", {
+      key,
+    });
+    expect(adopted.status).toBe(200);
+  });
+
+  it("rejects a mistyped recovery key rather than storing it", async () => {
+    await goPremium();
+    const { status, payload } = await harness.request(
+      "PUT",
+      "/api/deploy/backup/recovery-key",
+      { key: "OOOO-OOOO-OOOO" },
+    );
+
+    expect(status).toBe(500);
+    expect(JSON.stringify(payload)).toBeTruthy();
+  });
+
+  // One destination failing must not cancel the other.
+  it("still writes locally when the upload fails", async () => {
+    await goPremiumWithBackupDir();
     await harness.request("PUT", "/api/settings/backup", {
       enabled: true,
       directory: join(tempRoot, "backups"),
+      destination: "both",
     });
 
+    harness.ctx.cloudFetchImpl = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof globalThis.fetch;
+
     const { status, payload } = await harness.request("POST", "/api/deploy/backup");
+    const result = payload.value as {
+      local: { bytes: number } | null;
+      failures: { destination: string }[];
+    };
+
     expect(status).toBe(200);
-    expect((payload.value as { bytes: number }).bytes).toBeGreaterThan(0);
+    expect(result.local?.bytes).toBeGreaterThan(0);
+    expect(result.failures.map((f) => f.destination)).toContain("cloud");
+  });
+
+  it("prunes to the service's retention limit", async () => {
+    await goPremium();
+    await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: null,
+      destination: "cloud",
+    });
+
+    for (let i = 0; i < 5; i++) {
+      await harness.request("POST", "/api/deploy/backup");
+    }
+
+    const list = await harness.request("GET", "/api/deploy/backup/cloud");
+    expect((list.payload.value as { backups: unknown[] }).backups).toHaveLength(3);
   });
 });
+
+async function goPremiumWithBackupDir(): Promise<void> {
+  await harness.request("POST", "/api/license/activate", {
+    key: licenseKey({ expiresAt: null }),
+  });
+  await harness.request("PUT", "/api/settings/backup", {
+    enabled: true,
+    directory: join(tempRoot, "backups"),
+  });
+}

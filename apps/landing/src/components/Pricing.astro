@@ -1,0 +1,164 @@
+---
+/**
+ * Premium pricing.
+ *
+ * The number is **not in this repository.** It is read from the Stripe Price
+ * named by `PREMIUM_PRICE_ID`, fetched from `/api/checkout/price` when the page
+ * loads. That is why this section can show a real figure while the pricing
+ * decision stays a Stripe dashboard setting rather than a code change.
+ *
+ * Fetched in the browser rather than rendered on the server so this page stays
+ * a static file. The markup below is what ships; the price is filled in
+ * afterwards, and if the service is unreachable or no price is configured, the
+ * page keeps the wording it carried before there was a price at all — never a
+ * guess.
+ */
+const free = [
+  "Unlimited store generation",
+  "Live Astro preview and five themes",
+  "Product images downloaded into the project",
+  "AI copy and alt text on your own key",
+  "A real dev environment for every store",
+  "Waitlist email capture",
+];
+
+const premium = [
+  "Everything in Free",
+  "Stripe checkout on your stores",
+  "Automated backups to a folder you pick",
+  "Encrypted off-site backup we can't read",
+  "Licence works offline",
+];
+---
+
+<section class="wrap section" id="pricing">
+  <div class="section-label">Pricing</div>
+  <div class="cells cells-2">
+    <div class="cell">
+      <div class="cell-index">Free</div>
+      <h3>Measure demand</h3>
+      <p class="price-figure">$0</p>
+      <p class="card-body">
+        The whole pipeline: scrape, theme, preview, generate, deploy. The buy
+        button captures emails to your own form endpoint, so you can measure
+        intent before you stock anything.
+      </p>
+      <ul class="list-plain" style="margin-top: var(--space-2)">
+        {free.map((item) => <li>{item}</li>)}
+      </ul>
+    </div>
+
+    <div class="cell">
+      <div class="cell-index">Premium</div>
+      <h3>Take the money</h3>
+      <p class="price-figure" data-price>Not on sale yet</p>
+      <p class="card-body">
+        Turns the waitlist into a real checkout, created against your own Stripe
+        account with your own keys. We take no cut and never touch a payment.
+      </p>
+      <ul class="list-plain" style="margin-top: var(--space-2)">
+        {premium.map((item) => <li>{item}</li>)}
+      </ul>
+
+      <button
+        class="btn btn-primary btn-block"
+        type="button"
+        data-subscribe
+        hidden>Subscribe</button
+      >
+      <div class="signin-result" data-subscribe-error hidden></div>
+    </div>
+  </div>
+
+  <p class="footnote" data-pricing-note>
+    The price of Premium isn't set yet, so this page shows no number. What each
+    tier does is settled: free measures demand, premium takes payment.
+  </p>
+</section>
+
+<script>
+  const figure = document.querySelector("[data-price]");
+  const button = document.querySelector("[data-subscribe]");
+  const note = document.querySelector("[data-pricing-note]");
+  const error = document.querySelector("[data-subscribe-error]");
+
+  const formatPrice = (price) => {
+    const amount = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: String(price.currency ?? "usd").toUpperCase(),
+      maximumFractionDigits: price.amountMinor % 100 === 0 ? 0 : 2,
+    }).format(price.amountMinor / 100);
+
+    const period =
+      price.interval && price.intervalCount === 1
+        ? `a ${price.interval}`
+        : price.interval
+          ? `every ${price.intervalCount} ${price.interval}s`
+          : "";
+
+    return { amount, period };
+  };
+
+  const loadPrice = async () => {
+    try {
+      const response = await fetch("/api/checkout/price");
+      const payload = await response.json();
+      const price = payload?.ok ? payload.value : null;
+
+      // No price configured yet is a perfectly normal state, not an error:
+      // premium simply isn't on sale, and the page already says so.
+      if (!price || price.amountMinor === null) return;
+
+      const { amount, period } = formatPrice(price);
+      if (figure instanceof HTMLElement) {
+        figure.textContent = amount;
+        if (period) {
+          const suffix = document.createElement("span");
+          suffix.className = "price-period";
+          suffix.textContent = ` ${period}`;
+          figure.appendChild(suffix);
+        }
+      }
+      if (button instanceof HTMLElement) button.hidden = false;
+      if (note instanceof HTMLElement) {
+        note.textContent =
+          "A licence key, not an account — verified on your own machine, works offline. Cancel any time and it keeps working to the end of the period you paid for.";
+      }
+    } catch {
+      // Leave the static "not on sale yet" wording in place.
+    }
+  };
+
+  button?.addEventListener("click", async () => {
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    button.disabled = true;
+    button.textContent = "Opening Stripe…";
+
+    try {
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const payload = await response.json();
+
+      if (payload?.ok && payload.value?.url) {
+        window.location.href = payload.value.url;
+        return;
+      }
+      throw new Error(payload?.error?.message ?? "Checkout is unavailable.");
+    } catch (cause) {
+      if (error instanceof HTMLElement) {
+        error.hidden = false;
+        error.className = "signin-result is-bad";
+        error.textContent =
+          cause instanceof Error ? cause.message : "Couldn't start checkout.";
+      }
+      button.disabled = false;
+      button.textContent = "Subscribe";
+    }
+  });
+
+  void loadPrice();
+</script>

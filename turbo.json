@@ -2,11 +2,23 @@
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
   "globalEnv": [
+    "BACKUP_MAX_COUNT",
+    "BACKUP_MAX_UPLOAD_BYTES",
+    "BACKUP_QUOTA_BYTES",
+    "DSV_CLOUD_URL",
     "DSV_DEV_SERVER_URL",
+    "DSV_LICENSE_PRIVATE_KEY",
     "DSV_LICENSE_PUBLIC_KEY",
     "DSV_PREVIEW_RUNTIME",
     "HOME",
-    "PATH"
+    "LICENSE_FROM_EMAIL",
+    "PATH",
+    "PREMIUM_PRICE_ID",
+    "RESEND_API_KEY",
+    "SITE_URL",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "URL"
   ],
   "tasks": {
     "build": {

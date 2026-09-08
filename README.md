@@ -28,6 +28,7 @@ providers directly.
 | `packages/db`              | SQLite: migrations, repositories, encrypted secret storage, premium backup. All DB access goes through here.                          |
 | `packages/store-generator` | `scrape/` (URL → normalized product), `generate/` (product → Astro project), `assets/` (download images into the store), `stripe/` (BYOK payment links), `ai/` (BYOK OpenRouter + Gemini), `dev-env.ts`. |
 | `packages/api`             | Hono routes + services. Runs in-process inside Electron.                                                                              |
+| `packages/cloud`           | Hono service **we** host: licence issuance and encrypted backup storage. Deployed with the landing page as one Netlify Function.       |
 | `packages/design-system`   | Modernist tokens/components for the app and landing page. Not used by generated stores.                                               |
 
 ## Tiers
@@ -41,11 +42,16 @@ providers directly.
 | Per-store dev environment   | yes                  | yes                 |
 | Buy button                  | **waitlist capture** | **Stripe checkout** |
 | Automated backups           | no                   | yes                 |
+| Encrypted off-site backup   | no                   | yes                 |
 
 Free measures demand; premium takes payment. The waitlist posts to the store
 owner's own form endpoint (falling back to `mailto:` their support address) —
-we never receive the addresses. Premium is unlocked with an Ed25519-signed
-licence key, verified offline.
+we never receive the addresses. Premium is an annual subscription unlocked with
+an Ed25519-signed licence key, verified offline — no account, no password.
+
+**The price is not in this repository.** It lives on a Stripe Price named by
+`PREMIUM_PRICE_ID`, and the landing page reads it back at runtime, so pricing is
+a dashboard setting rather than a deploy.
 
 Mint a key for local development:
 
@@ -75,10 +81,26 @@ npm run dev --workspace @repo/desktop
 Checks:
 
 ```bash
-npm run test           # 326 tests
+npm run test           # 391 tests
 npm run check-types
 npm run lint
 ```
+
+## The hosted service
+
+`packages/cloud` deploys with the marketing site. Everything it needs is an
+environment variable — see `apps/landing/.env.example`. Generate an issuer key
+pair once:
+
+```bash
+node scripts/issue-license.mjs --generate-keypair
+```
+
+Put the **private** half in `DSV_LICENSE_PRIVATE_KEY` on the deploy host and
+nowhere else; the public half goes in `DSV_LICENSE_PUBLIC_KEY` both there and in
+the desktop app's build. With nothing configured the marketing site still builds
+and serves — only the paid features are unavailable, and `/api/health` says which
+pieces are missing.
 
 Package installers:
 
@@ -114,6 +136,12 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
 - **Hosting (BYO).** Generated stores are static output. We emit the deploy
   command; the host's own CLI performs the upload. We never serve storefront
   traffic.
+- **Backups (hosted, and sealed).** This is the one place we pay to store user
+  data, as a paid opt-in *alongside* the local-folder destination. It is only
+  defensible because the database is encrypted on the user's machine with a key
+  the service never receives: we hold ciphertext and a length. A breach of that
+  bucket leaks backup sizes and timestamps. There is no server-side decrypt path,
+  and there must never be one.
 - **Secrets.** Encrypted at rest with the OS keychain via Electron `safeStorage`,
   falling back to an AES-256-GCM local key file where no secret service exists.
   Plaintext is never returned over IPC — the renderer only ever sees a `last4`
@@ -156,3 +184,14 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
   with tests for each.
 - **Artifact names are pinned** in `electron-builder.yml` because the landing
   page links to those exact filenames. Change one, change the other.
+- **The hosted service is one function.** `packages/cloud` is a Hono app mounted
+  by `apps/landing/netlify/functions/api.mts` — the same `app.fetch(request)`
+  arrangement the desktop app uses, so it is tested end to end with no platform
+  in the picture. There is deliberately no Astro adapter: `@astrojs/netlify`
+  loads Netlify's bundler at config time, which reads a TypeScript API the
+  native TypeScript 7 compiler here doesn't expose.
+- **Licence ids are stable across renewals**, derived from the Stripe
+  subscription id. Backup storage is namespaced by that id, so a changing one
+  would orphan a subscriber's backups every year.
+- **Restores are staged, not swapped.** The decrypted database is written beside
+  the live one and adopted at next boot, before anything opens a connection.

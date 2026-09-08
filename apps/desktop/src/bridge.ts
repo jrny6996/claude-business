@@ -1,6 +1,9 @@
 import type {
   AiProvider,
   AppErrorShape,
+  BackupDestination,
+  BackupList,
+  BackupUploadResult,
   DevEnvProgress,
   DevEnvStatus,
   SettingsView,
@@ -128,8 +131,16 @@ export const api = {
     call<SettingsView>("PUT", "/api/settings/deploy-token", { provider, token }),
   deleteSecret: (name: string) =>
     call<SettingsView>("DELETE", `/api/settings/secrets/${name}`),
-  setBackup: (enabled: boolean, directory: string | null) =>
-    call<SettingsView>("PUT", "/api/settings/backup", { enabled, directory }),
+  setBackup: (
+    enabled: boolean,
+    directory: string | null,
+    destination?: BackupDestination,
+  ) =>
+    call<SettingsView>("PUT", "/api/settings/backup", {
+      enabled,
+      directory,
+      ...(destination ? { destination } : {}),
+    }),
   previewProduct: (url: string) => call("POST", "/api/stores/preview", { url }),
   listStores: () => call<Store[]>("GET", "/api/stores"),
   createStore: (payload: unknown) =>
@@ -154,8 +165,29 @@ export const api = {
   activateLicense: (key: string) =>
     call<LicenseStatus>("POST", "/api/license/activate", { key }),
   deactivateLicense: () => call<LicenseStatus>("DELETE", "/api/license"),
-  runBackup: () => call("POST", "/api/deploy/backup"),
+  runBackup: () => call<RunBackupResult>("POST", "/api/deploy/backup"),
+
+  // Cloud backup. The recovery key has its own endpoint so it is only ever
+  // sent when the user asks to see it, never on a settings poll.
+  recoveryKey: () =>
+    call<{ key: string }>("GET", "/api/deploy/backup/recovery-key"),
+  setRecoveryKey: (key: string) =>
+    call("PUT", "/api/deploy/backup/recovery-key", { key }),
+  cloudBackups: () => call<BackupList>("GET", "/api/deploy/backup/cloud"),
+  deleteCloudBackup: (id: string) =>
+    call<BackupList>("DELETE", `/api/deploy/backup/cloud/${id}`),
+  restoreCloudBackup: (id: string) =>
+    call<{ path: string; bytes: number; requiresRestart: true }>(
+      "POST",
+      `/api/deploy/backup/cloud/${id}/restore`,
+    ),
 };
+
+export interface RunBackupResult {
+  local: { path: string; bytes: number; createdAt: string } | null;
+  cloud: BackupUploadResult | null;
+  failures: { destination: "local" | "cloud"; message: string }[];
+}
 
 /**
  * Unwraps the `{ ok, value | error }` envelope the dev-environment IPC handlers

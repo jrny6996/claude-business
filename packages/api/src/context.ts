@@ -35,6 +35,22 @@ export interface AppContext {
   now?: () => Date;
   /** Overrides the built-in licence public key. Set by tests. */
   licensePublicKeyPem?: string;
+  /**
+   * Base URL of the hosted licensing/backup service. Overridable for staging
+   * and, in tests, pointed at a fake.
+   */
+  cloudBaseUrl?: string;
+  /**
+   * Fetch used for hosted-service calls. A real `fetch`, not the text-only
+   * `FetchLike` — backups are uploaded and downloaded as raw bytes.
+   */
+  cloudFetchImpl?: typeof globalThis.fetch;
+  /**
+   * Directory the SQLite file lives in. Needed to stage a restored database
+   * beside it; the swap itself happens at next launch, before anything opens a
+   * connection.
+   */
+  databaseDir?: string;
 }
 
 export const nowOf = (ctx: AppContext): Date =>

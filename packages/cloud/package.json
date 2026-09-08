@@ -1,5 +1,5 @@
 {
-  "name": "@repo/api",
+  "name": "@repo/cloud",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,14 +18,11 @@
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
-    "@repo/db": "*",
     "@repo/shared": "*",
-    "@repo/store-generator": "*",
     "hono": "4.13.5",
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@repo/cloud": "*",
     "@repo/eslint-config": "*",
     "@repo/typescript-config": "*",
     "@types/node": "26.4.1",

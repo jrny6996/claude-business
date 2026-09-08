@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AiSettingsSchema } from "./ai.js";
+import { BackupDestinationSchema } from "./cloud.js";
 
 export const TierSchema = z.enum(["free", "premium"]);
 export type Tier = z.infer<typeof TierSchema>;
@@ -45,5 +46,13 @@ export const SettingsViewSchema = z.object({
   deployTokens: z.partialRecord(DeployProviderSchema, SecretMetadataSchema),
   backupEnabled: z.boolean().default(false),
   backupDir: z.string().nullable().default(null),
+  /** Local folder, our hosted storage, or both. Defaults to local. */
+  backupDestination: BackupDestinationSchema.default("local"),
+  /**
+   * Whether a backup encryption key exists. The key itself never travels in
+   * this payload — it is fetched deliberately, by its own endpoint, when the
+   * user asks to see it.
+   */
+  backupKeySet: z.boolean().default(false),
 });
 export type SettingsView = z.infer<typeof SettingsViewSchema>;

@@ -25,6 +25,15 @@ export {
   type BackupOptions,
   type BackupResult,
 } from "./backup.js";
+export {
+  BACKUP_KEY_BYTES,
+  BackupDecryptionError,
+  decryptBackup,
+  encryptBackup,
+  formatBackupKey,
+  generateBackupKey,
+  parseBackupKey,
+} from "./backup-crypto.js";
 
 import { openDatabase, type Db } from "./client.js";
 import type { SecretCipher } from "./crypto.js";

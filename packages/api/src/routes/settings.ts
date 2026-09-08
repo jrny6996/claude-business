@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { AiProviderSchema, DeployProviderSchema } from "@repo/shared";
+import {
+  AiProviderSchema,
+  BackupDestinationSchema,
+  DeployProviderSchema,
+} from "@repo/shared";
 import { SECRET_NAMES } from "@repo/db";
 import type { AppContext } from "../context.js";
 import {
@@ -31,6 +35,7 @@ const DeployBody = z.object({
 const BackupBody = z.object({
   enabled: z.boolean(),
   directory: z.string().min(1).nullable().default(null),
+  destination: BackupDestinationSchema.optional(),
 });
 const SecretParam = z.enum(SECRET_NAMES);
 
