@@ -81,7 +81,7 @@ npm run dev --workspace @repo/desktop
 Checks:
 
 ```bash
-npm run test           # 391 tests
+npm run test           # 415 tests
 npm run check-types
 npm run lint
 ```
@@ -141,7 +141,9 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
   defensible because the database is encrypted on the user's machine with a key
   the service never receives: we hold ciphertext and a length. A breach of that
   bucket leaks backup sizes and timestamps. There is no server-side decrypt path,
-  and there must never be one.
+  and there must never be one. Storage is S3 — or, via `S3_ENDPOINT`, anything
+  that speaks it. Cloudflare R2 is worth a look: a backup service is egress-heavy
+  and R2 doesn't charge for egress.
 - **Secrets.** Encrypted at rest with the OS keychain via Electron `safeStorage`,
   falling back to an AES-256-GCM local key file where no secret service exists.
   Plaintext is never returned over IPC — the renderer only ever sees a `last4`

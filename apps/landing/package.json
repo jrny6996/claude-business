@@ -11,7 +11,6 @@
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
-    "@netlify/blobs": "^9.1.2",
     "@repo/cloud": "*",
     "@repo/design-system": "*",
     "@repo/shared": "*",

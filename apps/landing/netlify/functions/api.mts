@@ -1,17 +1,15 @@
-import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
 import {
   DEFAULT_CLOUD_CONFIG,
   LoggingMailer,
   MemoryBlobStore,
   ResendMailer,
+  S3BlobStore,
   StripeClient,
   createCloudApp,
-  type BlobEntry,
   type BlobStore,
   type CloudContext,
   type Mailer,
-  type StoredBlob,
 } from "@repo/cloud";
 import type { Hono } from "hono";
 
@@ -35,74 +33,42 @@ import type { Hono } from "hono";
  */
 
 /**
- * Netlify Blobs behind the service's own storage interface.
+ * Backup storage: S3, or anything that speaks it.
  *
- * Strong consistency is deliberate: the default is eventually consistent, and a
- * user who takes a backup then opens the list would otherwise be told it isn't
- * there.
- */
-class NetlifyBlobStore implements BlobStore {
-  readonly #store = getStore({ name: "dsv-backups", consistency: "strong" });
-
-  async put(
-    key: string,
-    bytes: Uint8Array,
-    metadata: Record<string, string>,
-  ): Promise<void> {
-    await this.#store.set(key, bytes as unknown as ArrayBuffer, { metadata });
-  }
-
-  async get(key: string): Promise<StoredBlob | null> {
-    const result = await this.#store.getWithMetadata(key, { type: "arrayBuffer" });
-    if (!result) return null;
-
-    return {
-      key,
-      bytes: new Uint8Array(result.data as ArrayBuffer),
-      metadata: (result.metadata ?? {}) as Record<string, string>,
-    };
-  }
-
-  async delete(key: string): Promise<void> {
-    await this.#store.delete(key);
-  }
-
-  /**
-   * Netlify's `list` returns keys without metadata, so each needs a follow-up
-   * read. That is N requests, acceptable only because retention caps N at ten
-   * per account — if that limit grows a lot, this wants an index blob instead.
-   */
-  async list(prefix: string): Promise<BlobEntry[]> {
-    const { blobs } = await this.#store.list({ prefix });
-
-    return Promise.all(
-      blobs.map(async ({ key }) => {
-        const metadata = await this.#store.getMetadata(key);
-        return {
-          key,
-          metadata: (metadata?.metadata ?? {}) as Record<string, string>,
-        };
-      }),
-    );
-  }
-}
-
-/**
- * Netlify Blobs in production; an in-memory store when running locally.
+ * `S3_ENDPOINT` points this at Cloudflare R2, Backblaze B2 or MinIO instead of
+ * AWS. Worth knowing which you pick, now that we pay for this: a backup service
+ * is egress-heavy by definition, and R2 charges nothing for it.
  *
- * The fallback means `netlify dev` works with no blob store configured, and
- * loses everything on restart — correct for a development stand-in, and loud
- * enough that nobody mistakes it for durable.
+ * With nothing configured this falls back to an in-memory store, so
+ * `netlify dev` runs with no cloud account and loses everything on restart —
+ * correct for a development stand-in, and loud enough that nobody mistakes it
+ * for durable.
  */
 function blobStore(): BlobStore {
-  try {
-    return new NetlifyBlobStore();
-  } catch {
+  const env = process.env;
+  const bucket = env.S3_BUCKET;
+  const accessKeyId = env.S3_ACCESS_KEY_ID;
+  const secretAccessKey = env.S3_SECRET_ACCESS_KEY;
+
+  if (!bucket || !accessKeyId || !secretAccessKey) {
     console.warn(
-      "[cloud] Netlify Blobs unavailable; using an in-memory store. Backups will not persist.",
+      "[cloud] S3 is not configured; using an in-memory store. Backups will not persist.",
     );
     return new MemoryBlobStore();
   }
+
+  return new S3BlobStore({
+    bucket,
+    // R2 and several others ignore the region but still require one to sign.
+    region: env.S3_REGION || "auto",
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      ...(env.S3_SESSION_TOKEN ? { sessionToken: env.S3_SESSION_TOKEN } : {}),
+    },
+    ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
+    ...(env.S3_PREFIX ? { prefix: env.S3_PREFIX } : {}),
+  });
 }
 
 function mailer(): Mailer {

@@ -1,9 +1,11 @@
 import { createHmac, generateKeyPairSync } from "node:crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { BACKUP_CREATED_AT_HEADER } from "@repo/shared";
 import { DEFAULT_CLOUD_CONFIG, type CloudContext } from "./context.js";
 import { createCloudApp } from "./index.js";
 import { MemoryBlobStore } from "./storage/blobs.js";
+import { S3BlobStore } from "./storage/s3.js";
+import { createServer, type Server } from "node:http";
 import { issueLicense, licenseIdForSubscription } from "./services/issuer.js";
 import type { Mailer, OutgoingMail } from "./services/mail.js";
 import type {
@@ -615,5 +617,195 @@ describe("licenseIdForSubscription", () => {
 
   it("does not embed the Stripe id it came from", () => {
     expect(licenseIdForSubscription("sub_123")).not.toContain("sub_123");
+  });
+});
+
+/**
+ * The whole backup surface again, this time on S3 rather than the in-memory
+ * store.
+ *
+ * `S3BlobStore` has its own tests, but those prove the *store* works. This
+ * proves the *service* works on it — that retention, quota and per-account
+ * isolation still hold when the backing store is remote, paginated and
+ * eventually returns metadata through a different mechanism. Storage swaps are
+ * exactly where an interface turns out to have been leakier than it looked.
+ */
+describe("backups on S3", () => {
+  let s3: Server;
+  let objects: Map<string, { body: Buffer; manifest: string | null }>;
+  let endpoint: string;
+
+  beforeAll(async () => {
+    s3 = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = Buffer.concat(chunks);
+      const url = new URL(req.url ?? "/", "http://localhost");
+      const key = decodeURIComponent(url.pathname.split("/").slice(2).join("/"));
+
+      if (!req.headers.authorization?.startsWith("AWS4-HMAC-SHA256 ")) {
+        res.writeHead(403).end();
+        return;
+      }
+
+      if (url.searchParams.get("list-type") === "2") {
+        const prefix = url.searchParams.get("prefix") ?? "";
+        const matching = [...objects.keys()].filter((k) => k.startsWith(prefix));
+        res.writeHead(200).end(
+          `<?xml version="1.0"?><ListBucketResult>${matching
+            .map((k) => `<Contents><Key>${k}</Key></Contents>`)
+            .join("")}<IsTruncated>false</IsTruncated></ListBucketResult>`,
+        );
+        return;
+      }
+
+      if (req.method === "PUT") {
+        objects.set(key, {
+          body,
+          manifest: (req.headers["x-amz-meta-manifest"] as string) ?? null,
+        });
+        res.writeHead(200).end();
+        return;
+      }
+
+      const found = objects.get(key);
+      if (req.method === "GET" || req.method === "HEAD") {
+        if (!found) {
+          res.writeHead(404).end();
+          return;
+        }
+        res.writeHead(200, {
+          ...(found.manifest ? { "x-amz-meta-manifest": found.manifest } : {}),
+        });
+        res.end(req.method === "HEAD" ? undefined : found.body);
+        return;
+      }
+
+      if (req.method === "DELETE") {
+        objects.delete(key);
+        res.writeHead(204).end();
+        return;
+      }
+      res.writeHead(405).end();
+    });
+
+    await new Promise<void>((resolve) => s3.listen(0, "127.0.0.1", resolve));
+    const address = s3.address();
+    endpoint = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+  });
+
+  afterAll(() => {
+    s3.close();
+  });
+
+  beforeEach(() => {
+    objects = new Map();
+    ctx.blobs = new S3BlobStore({
+      bucket: "dsv-backups",
+      region: "eu-west-1",
+      credentials: {
+        accessKeyId: "AKIDEXAMPLE",
+        secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+      },
+      endpoint,
+      prefix: "store-validator/",
+    });
+    app = createCloudApp(ctx);
+  });
+
+  const upload = (bytes: Uint8Array, key = premiumKey()) =>
+    request("POST", "/api/backup", {
+      body: bytes as unknown as BodyInit,
+      headers: {
+        ...auth(key),
+        "Content-Type": "application/octet-stream",
+        [BACKUP_CREATED_AT_HEADER]: "2026-09-08T11:00:00.000Z",
+      },
+    });
+
+  it("stores, lists and returns a backup byte for byte", async () => {
+    const ciphertext = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0xff]);
+    const { status, payload } = await upload(ciphertext);
+    expect(status).toBe(200);
+
+    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    expect(list.payload.value.backups).toHaveLength(1);
+    expect(list.payload.value.quota.usedBytes).toBe(ciphertext.length);
+
+    const { response } = await request(
+      "GET",
+      `/api/backup/${payload.value.backup.id}`,
+      { headers: auth(premiumKey()) },
+    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(ciphertext);
+  });
+
+  // The camelCase manifest fields have to survive S3, which lowercases
+  // per-field metadata keys.
+  it("preserves the manifest across a real S3 round trip", async () => {
+    await upload(new Uint8Array([1, 2, 3]));
+
+    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    const backup = list.payload.value.backups[0];
+
+    expect(backup.createdAt).toBe("2026-09-08T11:00:00.000Z");
+    expect(backup.algorithm).toBe("AES-256-GCM");
+    expect(backup.sizeBytes).toBe(3);
+  });
+
+  it("still prunes to the retention limit", async () => {
+    ctx.config.maxBackups = 2;
+
+    for (let i = 0; i < 4; i++) {
+      ctx.now = () => new Date(NOW.getTime() + i * 1000);
+      await upload(new Uint8Array([i + 1]));
+    }
+
+    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    expect(list.payload.value.backups).toHaveLength(2);
+    // Pruned objects are really gone from the bucket, not just delisted.
+    expect(objects.size).toBe(2);
+  });
+
+  it("still keeps accounts apart", async () => {
+    const { payload } = await upload(new Uint8Array([1, 2, 3]));
+
+    const other = issueLicense(
+      {
+        email: "other@example.com",
+        subscriptionId: "sub_other",
+        periodEnd: PERIOD_END,
+        issuedAt: NOW,
+      },
+      issuer.privateKeyPem,
+    ).key;
+
+    const cross = await request("GET", `/api/backup/${payload.value.backup.id}`, {
+      headers: auth(other),
+    });
+    expect(cross.status).toBe(404);
+  });
+
+  it("puts nothing identifying in the bucket, including the prefix", async () => {
+    await upload(new Uint8Array([1, 2, 3]));
+
+    const keys = [...objects.keys()];
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/^store-validator\/backups\//);
+    expect(keys[0]).not.toContain("buyer@example.com");
+    expect(keys[0]).not.toContain("sub_123");
+  });
+
+  it("surfaces a storage outage rather than reporting success", async () => {
+    ctx.blobs = new S3BlobStore({
+      bucket: "dsv-backups",
+      region: "eu-west-1",
+      credentials: { accessKeyId: "a", secretAccessKey: "b" },
+      endpoint: "http://127.0.0.1:1",
+    });
+    app = createCloudApp(ctx);
+
+    const { status } = await upload(new Uint8Array([1, 2, 3]));
+    expect(status).toBe(502);
   });
 });

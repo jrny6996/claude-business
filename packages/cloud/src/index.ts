@@ -8,6 +8,8 @@ import { webhookRoutes } from "./routes/webhook.js";
 
 export * from "./context.js";
 export * from "./storage/blobs.js";
+export * from "./storage/s3.js";
+export * from "./storage/sigv4.js";
 export * from "./services/stripe.js";
 export * from "./services/mail.js";
 export * from "./services/issuer.js";

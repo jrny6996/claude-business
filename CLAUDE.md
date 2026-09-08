@@ -331,7 +331,19 @@ out of sync with reality.
 - Quotas and retention live server-side (`packages/cloud/src/services/backups.ts`):
   ten backups per account, 250MB, 5MB per upload. The upload cap must stay under
   the platform's own request-body limit — Netlify's synchronous functions stop at
-  6MB.
+  6MB. S3 imposes no such limit; the cap exists only because bytes currently pass
+  through the function. Presigned direct-to-S3 upload would remove it.
+- **Storage is S3** (`packages/cloud/src/storage/s3.ts`), behind the `BlobStore`
+  interface, with SigV4 hand-rolled in `sigv4.ts` — same reasoning as every other
+  API client here, plus it works against any S3-compatible endpoint. Setting
+  `S3_ENDPOINT` switches to R2, B2 or MinIO; **R2 is worth considering now that we
+  pay, since a backup service is egress-heavy and R2 charges nothing for it.**
+  The signer is checked against AWS's published `get-vanilla` test vector — a
+  signing bug fails closed, so the direction is "backups stop working", never
+  "backups leak".
+- **Metadata travels as one base64 `x-amz-meta-manifest` header.** S3 lowercases
+  per-field metadata keys, which would silently turn `createdAt` into `createdat`
+  and break every read.
 
 ## The hosted service
 
