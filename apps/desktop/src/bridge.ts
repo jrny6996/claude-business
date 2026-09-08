@@ -1,4 +1,11 @@
-import type { AppErrorShape } from "@repo/shared";
+import type {
+  AiProvider,
+  AppErrorShape,
+  DevEnvProgress,
+  DevEnvStatus,
+  SettingsView,
+  Store,
+} from "@repo/shared";
 
 /** Mirrors the surface `electron/preload.ts` exposes. */
 export interface DesktopBridge {
@@ -17,6 +24,9 @@ export interface DesktopBridge {
   startPreview(storeId: string, projectDir: string): Promise<{ url: string }>;
   stopPreview(storeId: string): Promise<boolean>;
   previewStatus(storeId: string): Promise<{ url: string } | null>;
+  devEnvStatus(storeId: string, projectDir: string): Promise<unknown>;
+  devEnvInstall(storeId: string, projectDir: string): Promise<unknown>;
+  onDevEnvProgress(listener: (event: DevEnvProgress) => void): () => void;
 }
 
 declare global {
@@ -79,35 +89,91 @@ export async function call<T>(
   return envelope.value as T;
 }
 
+export interface CreateStoreResult {
+  store: Store;
+  warnings: { code: string; message: string }[];
+}
+
+export interface LicenseStatus {
+  tier: "free" | "premium";
+  expiresAt: string | null;
+  license: {
+    hint: string;
+    email: string;
+    valid: boolean;
+    reason?: string;
+  } | null;
+}
+
+export interface DeployInstructions {
+  provider: string;
+  projectDir: string;
+  command: string;
+  tokenEnvVar: string;
+  tokenPresent: boolean;
+  needsStripeEnv: boolean;
+  notes: string[];
+}
+
 export const api = {
   health: () => call<{ status: string; stores: number }>("GET", "/api/health"),
-  getSettings: () => call("GET", "/api/settings"),
-  saveOpenRouterKey: (apiKey: string) =>
-    call("PUT", "/api/settings/openrouter-key", { apiKey }),
+  getSettings: () => call<SettingsView>("GET", "/api/settings"),
+  saveAiKey: (provider: AiProvider, apiKey: string) =>
+    call<SettingsView>("PUT", "/api/settings/ai-key", { provider, apiKey }),
+  setAiPreferences: (provider: AiProvider, model?: string | null) =>
+    call<SettingsView>("PUT", "/api/settings/ai", { provider, model }),
   saveStripeKey: (secretKey: string) =>
-    call("PUT", "/api/settings/stripe-key", { secretKey }),
+    call<SettingsView>("PUT", "/api/settings/stripe-key", { secretKey }),
   saveDeployToken: (provider: string, token: string) =>
-    call("PUT", "/api/settings/deploy-token", { provider, token }),
-  deleteSecret: (name: string) => call("DELETE", `/api/settings/secrets/${name}`),
+    call<SettingsView>("PUT", "/api/settings/deploy-token", { provider, token }),
+  deleteSecret: (name: string) =>
+    call<SettingsView>("DELETE", `/api/settings/secrets/${name}`),
   setBackup: (enabled: boolean, directory: string | null) =>
-    call("PUT", "/api/settings/backup", { enabled, directory }),
+    call<SettingsView>("PUT", "/api/settings/backup", { enabled, directory }),
   previewProduct: (url: string) => call("POST", "/api/stores/preview", { url }),
-  listStores: () => call("GET", "/api/stores"),
-  createStore: (payload: unknown) => call("POST", "/api/stores", payload),
+  listStores: () => call<Store[]>("GET", "/api/stores"),
+  createStore: (payload: unknown) =>
+    call<CreateStoreResult>("POST", "/api/stores", payload),
   regenerateStore: (id: string, config?: unknown) =>
-    call("POST", `/api/stores/${id}/regenerate`, config ? { config } : {}),
+    call<CreateStoreResult>(
+      "POST",
+      `/api/stores/${id}/regenerate`,
+      config ? { config } : {},
+    ),
   updateTheme: (id: string, theme: unknown) =>
-    call("PUT", `/api/stores/${id}/theme`, { theme }),
+    call<Store>("PUT", `/api/stores/${id}/theme`, { theme }),
   deleteStore: (id: string) => call("DELETE", `/api/stores/${id}`),
   deployInstructions: (id: string, provider: string) =>
-    call("GET", `/api/deploy/${id}/instructions?provider=${provider}`),
+    call<DeployInstructions>(
+      "GET",
+      `/api/deploy/${id}/instructions?provider=${provider}`,
+    ),
   recordDeployed: (id: string, deployedUrl: string) =>
-    call("POST", `/api/deploy/${id}/deployed`, { deployedUrl }),
-  license: () => call("GET", "/api/license"),
-  activateLicense: (key: string) => call("POST", "/api/license/activate", { key }),
-  deactivateLicense: () => call("DELETE", "/api/license"),
+    call<Store>("POST", `/api/deploy/${id}/deployed`, { deployedUrl }),
+  license: () => call<LicenseStatus>("GET", "/api/license"),
+  activateLicense: (key: string) =>
+    call<LicenseStatus>("POST", "/api/license/activate", { key }),
+  deactivateLicense: () => call<LicenseStatus>("DELETE", "/api/license"),
   runBackup: () => call("POST", "/api/deploy/backup"),
 };
+
+/**
+ * Unwraps the `{ ok, value | error }` envelope the dev-environment IPC handlers
+ * return, so a failure surfaces as the same {@link ApiError} the HTTP path
+ * produces rather than Electron's "Error invoking remote method" wrapper.
+ */
+function unwrap<T>(payload: unknown): T {
+  const envelope = payload as Envelope<T> | null;
+  if (!envelope || typeof envelope !== "object") {
+    throw new ApiError({ code: "INTERNAL", message: "The app got an empty response." });
+  }
+  if (!envelope.ok) {
+    throw new ApiError(
+      envelope.error ?? { code: "INTERNAL", message: "Something went wrong." },
+    );
+  }
+  return envelope.value as T;
+}
 
 export const desktop = {
   chooseDirectory: () => bridge().chooseDirectory(),
@@ -121,4 +187,13 @@ export const desktop = {
     bridge().startPreview(storeId, projectDir),
   stopPreview: (storeId: string) => bridge().stopPreview(storeId),
   previewStatus: (storeId: string) => bridge().previewStatus(storeId),
+
+  devEnvStatus: async (storeId: string, projectDir: string) =>
+    unwrap<DevEnvStatus>(await bridge().devEnvStatus(storeId, projectDir)),
+  devEnvInstall: async (storeId: string, projectDir: string) =>
+    unwrap<{ storeId: string; packageCount: number | null; status: DevEnvStatus }>(
+      await bridge().devEnvInstall(storeId, projectDir),
+    ),
+  onDevEnvProgress: (listener: (event: DevEnvProgress) => void) =>
+    bridge().onDevEnvProgress(listener),
 };

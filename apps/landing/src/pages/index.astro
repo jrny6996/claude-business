@@ -5,7 +5,7 @@ import SignIn from "../components/SignIn.astro";
 
 const title = "Store Validator — test a product before you commit to it";
 const description =
-  "Paste an AliExpress link, get a real storefront you deploy to your own hosting. Bring your own Stripe and OpenRouter keys, so there are no hosting or AI costs baked into the price.";
+  "Paste an AliExpress link, get a real storefront you deploy to your own hosting. Bring your own Stripe key and your own AI key, so there are no hosting or AI costs baked into the price.";
 
 const steps = [
   {
@@ -43,6 +43,8 @@ const generated = [
   "Shipping and returns pages you can edit",
   "Static output — plain HTML, CSS and JS, no server to run",
   "Every product detail in one editable JSON file",
+  "Product images downloaded into the project, not hotlinked from AliExpress",
+  "A real dev setup — npm install, npm run dev, and DEVELOPMENT.md to explain it",
 ];
 ---
 
@@ -103,8 +105,8 @@ const generated = [
       <p class="footnote">
         Keys are stored encrypted on your machine, in your OS keychain where one
         is available, and are sent only to the service they belong to. Optional
-        AI copy rewriting uses your own OpenRouter key and is billed to your
-        account, not ours.
+        AI copy and alt text run on your own OpenRouter or Google Gemini key,
+        called straight from your machine and billed to your account, not ours.
       </p>
     </section>
 

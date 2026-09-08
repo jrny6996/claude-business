@@ -133,6 +133,21 @@ describe("api", () => {
 
     expect(request).toHaveBeenCalledWith("POST", "/api/stores/store-1/regenerate", {});
   });
+
+  it("sends the provider with an AI key so the right secret is written", async () => {
+    const request = vi.fn().mockResolvedValue({
+      status: 200,
+      body: { ok: true, value: {} },
+    });
+    install({ request });
+
+    await api.saveAiKey("gemini", "AIzaTest");
+
+    expect(request).toHaveBeenCalledWith("PUT", "/api/settings/ai-key", {
+      provider: "gemini",
+      apiKey: "AIzaTest",
+    });
+  });
 });
 
 describe("desktop", () => {
@@ -142,5 +157,64 @@ describe("desktop", () => {
 
     await expect(desktop.openExternal("https://stripe.com")).resolves.toBe(true);
     expect(openExternal).toHaveBeenCalledWith("https://stripe.com");
+  });
+
+  describe("dev environment", () => {
+    it("unwraps a successful status envelope", async () => {
+      install({
+        devEnvStatus: vi.fn().mockResolvedValue({
+          ok: true,
+          value: { storeId: "s1", kind: "linked" },
+        }),
+      });
+
+      await expect(desktop.devEnvStatus("s1", "/stores/s1")).resolves.toMatchObject({
+        kind: "linked",
+      });
+    });
+
+    it("passes the store id and project directory through", async () => {
+      const devEnvInstall = vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { packageCount: 193 } });
+      install({ devEnvInstall });
+
+      await desktop.devEnvInstall("s1", "/stores/s1");
+
+      expect(devEnvInstall).toHaveBeenCalledWith("s1", "/stores/s1");
+    });
+
+    // Without unwrapping, an error crossing IPC reaches the user wrapped in
+    // Electron's "Error invoking remote method" text, burying the real message.
+    it("turns an error envelope into an ApiError with the real message", async () => {
+      install({
+        devEnvInstall: vi.fn().mockResolvedValue({
+          ok: false,
+          error: {
+            code: "NODE_NOT_FOUND",
+            message: "Node.js and npm aren't installed on this machine.",
+            detail: "npm not found on PATH",
+          },
+        }),
+      });
+
+      try {
+        await desktop.devEnvInstall("s1", "/stores/s1");
+        expect.unreachable("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        expect((error as ApiError).code).toBe("NODE_NOT_FOUND");
+        expect((error as ApiError).message).toMatch(/node\.js and npm/i);
+        expect((error as ApiError).detail).toBe("npm not found on PATH");
+      }
+    });
+
+    it("handles an empty IPC response", async () => {
+      install({ devEnvStatus: vi.fn().mockResolvedValue(null) });
+
+      await expect(desktop.devEnvStatus("s1", "/x")).rejects.toMatchObject({
+        code: "INTERNAL",
+      });
+    });
   });
 });

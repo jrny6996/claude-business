@@ -16,10 +16,12 @@ future optimization — it's the business model. Any feature that would route im
 video, or LLM calls through our servers and bill it to us is out of scope unless
 explicitly discussed. Two mechanisms enforce this:
 
-- **BYOK for OpenRouter** — users supply their own OpenRouter API key; we store it
-  encrypted, never proxy inference through a key of ours, and every AI-powered feature
-  (product description rewrite, image alt text, etc.) fails gracefully with a clear
-  "add your OpenRouter key" prompt if none is set.
+- **BYOK for AI** — users supply their own key for **OpenRouter or Google Gemini**
+  (`packages/store-generator/src/ai/`); we store it encrypted, never proxy inference
+  through a key of ours, and every AI-powered feature (product description rewrite,
+  image alt text) degrades to a warning naming the selected provider if no key is set.
+  Adding a provider is one file implementing `AiClient` plus one case in
+  `createAiClient` — nothing above that line knows which provider is in use.
 - **BYO hosting** — generated stores are plain Astro projects the user deploys to their
   own Vercel/Netlify account (OAuth or manual deploy token). We do not run a
   reverse proxy or host their storefront traffic.
@@ -61,6 +63,11 @@ hosting account** and creates a Stripe Checkout Session per order.
   `unitAmount: 1` and `name: "FREE WATCH"` still sent `unit_amount=13908` and the
   catalogue's own product name. A test asserts the request interface carries no
   money field — do not add one.
+- **No generated file contains anything shaped like a Stripe key**, including
+  documentation placeholders — `.env.example` leaves `STRIPE_SECRET_KEY=` blank
+  and the README says `<your Stripe secret key>`. The test asserting this runs
+  over both a static and an API-mode store, because only the latter emits the
+  files that talk about the key.
 - Supports a real multi-item cart and any number of variants.
 - The route must keep `export const prerender = false`, and the project needs the
   matching adapter (`@astrojs/vercel` / `@astrojs/netlify`).
@@ -101,6 +108,62 @@ replaced an earlier version that believed whatever tier the client claimed.
 - Still open, and deliberately not guessed: **the price of premium**, and where
   the issuer runs / which payment webhook drives it. The landing page shows no
   number on purpose.
+
+## Product assets
+
+Generated stores **download their product images** rather than hotlinking
+`ae01.alicdn.com`. A store that hotlinks a marketplace CDN is not one the user
+owns: the URLs rot when a listing changes, AliExpress can block them, and every
+visitor to the user's shop hits a site the user doesn't control.
+
+This costs us nothing by construction — the download runs on the user's machine
+and the bytes land in their project, on their way to their own host. It is the
+same rule as everything else here, applied to images.
+
+- `packages/store-generator/src/assets/` — `download.ts` is the pure part
+  (naming, sniffing, guards), `index.ts` writes to `public/images/`.
+- **Bytes decide the extension, not the URL.** AliExpress serves AVIF behind
+  `.jpg` addresses; trusting the URL gives the user a gallery their browser
+  won't decode. Magic-byte sniff first, then `content-type`, then the URL.
+- Names are **positional** (`product-01.jpg`), never derived from the source
+  filename — those are opaque hashes and would put marketplace identifiers into
+  the user's repository.
+- **Partial success is normal.** An image that won't download keeps its remote
+  URL and becomes a warning; one dead CDN link must not cost someone their store.
+- Guards: `http(s)` only (a scraped page is untrusted input), 8MB per image, 16
+  images per store, and every path re-checked against the output directory.
+- `ProductImage.url` therefore accepts an absolute URL **or** a root-relative
+  path (`ImageSrcSchema` in `packages/shared/src/product.ts`).
+
+## Per-store dev environment
+
+`Stores → Dev environment` runs a real `npm install` in the store's own folder.
+
+The store the preview runs is **not a project anyone can open**: its
+`node_modules` is a symlink to our shared Astro runtime, which resolves only on
+that machine while the app is installed. Everything the README tells the user to
+do next — open it in an editor, commit it, copy it to a build machine — assumes a
+real install.
+
+- Pure parts (command building, npm output parsing) in
+  `packages/store-generator/src/dev-env.ts`; spawning in
+  `apps/desktop/electron/dev-env.ts`.
+- **The symlink must be removed before installing.** npm would otherwise follow
+  it and install into the *shared* runtime, corrupting the preview for every
+  other store. `rm` on a symlink removes the link, never the target — there is a
+  test for exactly that.
+- `npm install`, never `npm ci`: a generated store ships no lockfile.
+- We **do not bundle a Node toolchain.** If npm isn't on the user's machine we
+  say so and print the command. A GUI-launched app inherits a minimal PATH, so
+  the usual Node locations are probed explicitly.
+- The preview prefers the store's own `astro` once it has one, so after setup the
+  preview runs exactly what the user's `npm run dev` would.
+- Generated stores ship `.nvmrc`, `.editorconfig`, `.env.example` and
+  `DEVELOPMENT.md`; `.gitignore` excludes `.env` and keeps `.env.example`.
+- **`@repo/desktop` depends on `astro` and both adapters** — that is the shared
+  preview runtime. Without the adapters, previewing a premium Vercel/Netlify
+  store fails with `Cannot find module '@astrojs/vercel'`. Keep those versions
+  matching what `generate/templates/project.ts` pins into the store.
 
 ## Store preview
 
@@ -170,8 +233,11 @@ through `.grayscale`, and never hard-code a value the tokens already carry.
 - **Generated storefronts**: Astro, static output, deployed by the user to their own
   Vercel/Netlify. Treat the Astro site as a build artifact our tool produces, not
   something our runtime serves.
-- **AI**: OpenRouter only, BYOK, called directly from the user's machine/deploy — never
-  proxied through our infrastructure.
+- **AI**: OpenRouter or Google Gemini, BYOK, called directly from the user's machine
+  — never proxied through our infrastructure. The provider is a user preference
+  (`ai.provider`), independent of which keys are stored, so switching never touches a
+  key. `resolveAiCredentials` in `packages/api/src/services/settings.ts` is the single
+  place a credential is chosen.
 
 ## Repo structure (adjust as it solidifies, keep this section current)
 
@@ -182,7 +248,8 @@ through `.grayscale`, and never hard-code a value the tokens already carry.
 /packages
   /api            Hono routes + services: settings/BYOK, licensing, store-gen orchestration, deploy
   /store-generator scrape/ (URL -> normalized product), generate/ (product -> Astro site),
-                  stripe/ (BYOK payment links), ai/ (BYOK OpenRouter)
+                  stripe/ (BYOK payment links), ai/ (BYOK OpenRouter + Gemini),
+                  assets/ (download product images into the store), dev-env.ts
   /db             SQLite schema, migrations, repositories, secret encryption, backup
   /shared         Zod schemas + types (product, store config, settings, Result/AppError)
   /design-system  Modernist tokens + component CSS, vendored from Claude Design.
@@ -201,7 +268,10 @@ out of sync with reality.
       (local entitlement only; signed-licence verification still open — see below)
 - [x] Store generator — AliExpress product link → scraped data → Astro dropshipping site
 - [x] SQLite storage, per-user, with backup for premium tier
-- [x] BYOK OpenRouter key management (encrypted at rest, validated on save)
+- [x] BYOK AI key management — OpenRouter and Google Gemini, encrypted at rest,
+      validated on save, provider chosen independently of which keys exist
+- [x] Asset bundling — product images downloaded into the generated store
+- [x] Per-store dev environment — real `npm install`, `.env.example`, `DEVELOPMENT.md`
 - [x] BYOK Stripe checkout — generation-time payment links (see Checkout below)
 - [x] Deploy integration — token-based deploy instructions for Vercel/Netlify
       (we emit the command; the host's own CLI does the upload)

@@ -1,6 +1,10 @@
 /*
  * App-specific layout only. Every colour, font, space and radius comes from
  * the Modernist tokens in @repo/design-system — nothing is hard-coded here.
+ *
+ * House rules this file has to keep honest: zero corner radius, flush-left
+ * everything, 2px dividers, accent used sparingly, photographs through
+ * .grayscale.
  */
 
 html,
@@ -9,40 +13,112 @@ body,
   height: 100%;
 }
 
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+
 .app {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
   min-height: 100%;
 }
 
-.app-main {
-  flex: 1;
-  width: 100%;
-  max-width: 1040px;
-  margin: 0 auto;
-  padding: var(--space-6) var(--space-4) var(--space-8);
+@media (max-width: 820px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-/* Nav tabs reuse the design system's .nav; these only add the active rule. */
-.nav-tab {
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4) 0 var(--space-4) var(--space-4);
+  border-right: 2px solid var(--color-divider);
+  background: var(--color-surface);
+}
+
+@media (max-width: 820px) {
+  .sidebar {
+    border-right: 0;
+    border-bottom: 2px solid var(--color-divider);
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
+.sidebar-brand {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 17px;
+  line-height: 1.15;
+  margin-bottom: var(--space-4);
+  padding-right: var(--space-4);
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+@media (max-width: 820px) {
+  .sidebar-nav {
+    flex-direction: row;
+    gap: var(--space-2);
+  }
+}
+
+/* Flush-left, full-bleed to the divider: the active row reads as a tab. */
+.sidebar-tab {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
   background: none;
   border: 0;
-  padding: var(--space-1) 0;
+  border-left: 2px solid transparent;
+  padding-left: var(--space-3);
+  margin-left: calc(var(--space-3) * -1);
   font: inherit;
   font-size: 14px;
   color: inherit;
+  text-align: left;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
 }
 
-.nav-tab:hover {
+.sidebar-tab:hover {
   color: var(--color-accent);
 }
 
-.nav-tab[aria-current="page"] {
+.sidebar-tab[aria-current="page"] {
   color: var(--color-accent);
-  border-bottom-color: var(--color-accent);
+  border-left-color: var(--color-accent);
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
 }
+
+.sidebar-foot {
+  margin-top: auto;
+  padding: var(--space-4) var(--space-4) 0 0;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+
+@media (max-width: 820px) {
+  .sidebar-foot {
+    display: none;
+  }
+}
+
+.app-main {
+  min-width: 0;
+  padding: var(--space-6) var(--space-6) var(--space-8);
+}
+
+.app-main-inner {
+  max-width: 940px;
+}
+
+/* ── Stacks and grids ───────────────────────────────────────────────────── */
 
 .stack {
   display: flex;
@@ -98,6 +174,70 @@ body,
   margin-bottom: var(--space-4);
 }
 
+.section-head h2,
+.section-head h3 {
+  margin: 0;
+}
+
+/* A quieter divider for grouping inside a screen. */
+.subhead {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  border-bottom: 1px solid var(--color-divider);
+  padding-bottom: var(--space-1);
+}
+
+/* ── Numbered steps (the New store flow) ────────────────────────────────── */
+
+.step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.step + .step {
+  margin-top: var(--space-6);
+}
+
+.step-index {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 13px;
+  line-height: 22px;
+  text-align: left;
+  color: var(--color-bg);
+  background: var(--color-text);
+  height: 22px;
+}
+
+.step-index-done {
+  background: var(--color-accent);
+}
+
+.step-index-idle {
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  box-shadow: inset 0 0 0 1px var(--color-divider);
+}
+
+.step-title {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 17px;
+  margin-bottom: var(--space-1);
+}
+
+.step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── Product summary ────────────────────────────────────────────────────── */
+
 .preview {
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr);
@@ -118,6 +258,21 @@ body,
   background: var(--color-neutral-200);
 }
 
+.thumb-strip {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.thumb-strip img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  background: var(--color-neutral-200);
+}
+
+/* ── Messaging ──────────────────────────────────────────────────────────── */
+
 .banner {
   padding: var(--space-3);
   border-left: 2px solid var(--color-accent);
@@ -132,10 +287,22 @@ body,
   color: var(--color-neutral-800);
 }
 
+.banner-success {
+  border-left-color: var(--color-text);
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-900);
+}
+
 .banner ul {
   margin: var(--space-1) 0 0;
   padding-left: var(--space-4);
 }
+
+.banner p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── Code, monospace ────────────────────────────────────────────────────── */
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -151,7 +318,40 @@ body,
   font-size: 12px;
   overflow-x: auto;
   white-space: pre;
+  margin: 0;
 }
+
+.code-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.code-copy > .code-block {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A scrolling log — npm install output. Fixed height so it can't shove the
+   page around as lines arrive. */
+.log {
+  height: 200px;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-neutral-900);
+  color: var(--color-neutral-200);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-line-error {
+  color: var(--color-accent-400);
+}
+
+/* ── States ─────────────────────────────────────────────────────────────── */
 
 .spinner {
   font-size: 13px;
@@ -163,18 +363,125 @@ body,
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
 
+.empty-title {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 17px;
+  color: var(--color-text);
+  margin-bottom: var(--space-1);
+}
+
 .inline-actions {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
+  align-items: center;
 }
 
-/* Buttons in the system are flush-left when block-width; keep that honest. */
 .btn-block {
   justify-content: flex-start;
 }
 
-/* Store preview: the real Astro dev server in a frame, with theme controls. */
+/* ── Store list ─────────────────────────────────────────────────────────── */
+
+.store-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.store-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-divider);
+  text-align: left;
+}
+
+.store-row:first-child {
+  border-top: 2px solid var(--color-divider);
+}
+
+.store-row img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  background: var(--color-neutral-200);
+}
+
+.store-row-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.store-row-name {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 16px;
+}
+
+.store-row-sub {
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-row {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .store-row {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .store-row img {
+    width: 56px;
+    height: 56px;
+  }
+}
+
+/* ── Detail tabs ────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: var(--space-4);
+  border-bottom: 2px solid var(--color-divider);
+  margin-bottom: var(--space-4);
+}
+
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  padding: var(--space-2) 0;
+  font: inherit;
+  font-size: 14px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-accent);
+}
+
+.tab[aria-current="page"] {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+}
+
+/* ── Live preview ───────────────────────────────────────────────────────── */
+
 .preview-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 240px;
@@ -203,6 +510,120 @@ body,
   background: #ffffff;
 }
 
-.preview-frame input[type="color"] {
+input[type="color"].input {
   padding: 2px;
+  height: 36px;
+}
+
+/* ── Theme picker ───────────────────────────────────────────────────────── */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--space-2);
+}
+
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--color-divider);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.theme-swatch:hover {
+  border-color: var(--color-accent);
+}
+
+.theme-swatch[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* A miniature of the storefront: ground, headline bar, accent button. */
+.theme-swatch-art {
+  height: 52px;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.theme-swatch-bar {
+  height: 4px;
+  width: 70%;
+}
+
+.theme-swatch-btn {
+  height: 9px;
+  width: 42%;
+}
+
+.theme-swatch-label {
+  padding: 5px 8px;
+  font-size: 11px;
+  border-top: 1px solid var(--color-divider);
+}
+
+/* ── Dev environment ────────────────────────────────────────────────────── */
+
+.kv {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  font-size: 13px;
+}
+
+.kv dt {
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  vertical-align: baseline;
+  background: var(--color-neutral-400);
+}
+
+.status-dot-ok {
+  background: var(--color-text);
+}
+
+.status-dot-warn {
+  background: var(--color-accent);
+}
+
+/* ── Toasts ─────────────────────────────────────────────────────────────── */
+
+.toast-host {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 380px;
+  z-index: 10;
+}
+
+.toast {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 13px;
+  box-shadow: var(--shadow-md);
+}
+
+.toast-error {
+  background: var(--color-accent-700);
 }

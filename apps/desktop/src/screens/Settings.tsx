@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
-import type { SettingsView } from "@repo/shared";
-import { ApiError, api, desktop } from "../bridge.js";
+import {
+  AI_PROVIDERS,
+  AI_PROVIDER_INFO,
+  modelFor,
+  type AiProvider,
+  type SettingsView,
+} from "@repo/shared";
+import { ApiError, api, desktop, type LicenseStatus } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
 import { Field } from "../components/Field.js";
 import { SecretField } from "../components/SecretField.js";
+import { useToast } from "../components/Toast.js";
 
 /**
  * BYOK settings.
@@ -11,30 +18,19 @@ import { SecretField } from "../components/SecretField.js";
  * Every key here belongs to the user and is used from their machine only. The
  * copy says so explicitly — it's the product's differentiator, not a caveat.
  */
-interface LicenseStatus {
-  tier: "free" | "premium";
-  expiresAt: string | null;
-  license: {
-    hint: string;
-    email: string;
-    valid: boolean;
-    reason?: string;
-  } | null;
-}
-
 export function Settings() {
+  const toast = useToast();
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     try {
       const [nextSettings, nextLicense] = await Promise.all([
-        api.getSettings() as Promise<SettingsView>,
-        api.license() as Promise<LicenseStatus>,
+        api.getSettings(),
+        api.license(),
       ]);
       setSettings(nextSettings);
       setLicense(nextLicense);
@@ -44,15 +40,17 @@ export function Settings() {
     }
   };
 
-  const activate = async () => {
+  useEffect(() => {
+    void load();
+  }, []);
+
+  /** Runs a settings mutation, showing its result once rather than per screen. */
+  const run = async (action: () => Promise<SettingsView>, message: string) => {
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
-      setLicense((await api.activateLicense(licenseKey.trim())) as LicenseStatus);
-      setLicenseKey("");
-      setNotice("Licence activated.");
-      setSettings((await api.getSettings()) as SettingsView);
+      setSettings(await action());
+      toast.show(message);
     } catch (cause) {
       setError(cause as ApiError);
     } finally {
@@ -60,17 +58,14 @@ export function Settings() {
     }
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const run = async (action: () => Promise<unknown>, message: string) => {
+  const activate = async () => {
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
-      setSettings((await action()) as SettingsView);
-      setNotice(message);
+      setLicense(await api.activateLicense(licenseKey.trim()));
+      setLicenseKey("");
+      setSettings(await api.getSettings());
+      toast.show("Licence activated.");
     } catch (cause) {
       setError(cause as ApiError);
     } finally {
@@ -81,17 +76,20 @@ export function Settings() {
   const chooseBackupDir = async () => {
     const directory = await desktop.chooseDirectory();
     if (!directory) return;
-    await run(
-      () => api.setBackup(true, directory) as Promise<unknown>,
-      "Backup folder saved.",
-    );
+    await run(() => api.setBackup(true, directory), "Backup folder saved.");
   };
 
   if (!settings) {
-    return error ? <Banner title={error.message} /> : <div className="spinner">Loading…</div>;
+    return error ? (
+      <Banner title={error.message} />
+    ) : (
+      <div className="spinner">Loading…</div>
+    );
   }
 
   const isPremium = (license?.tier ?? settings.profile.tier) === "premium";
+  const provider = settings.ai.provider;
+  const providerInfo = AI_PROVIDER_INFO[provider];
 
   return (
     <div className="stack">
@@ -102,8 +100,11 @@ export function Settings() {
         </span>
       </div>
 
-      {error && <Banner title={error.message}>{error.detail && <div className="mono">{error.detail}</div>}</Banner>}
-      {notice && <Banner tone="neutral" title={notice} />}
+      {error && (
+        <Banner title={error.message}>
+          {error.detail && <div className="mono">{error.detail}</div>}
+        </Banner>
+      )}
 
       <Banner tone="neutral">
         Your keys stay on this machine, encrypted at rest, and are sent only to
@@ -135,7 +136,7 @@ export function Settings() {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  setLicense((await api.deactivateLicense()) as LicenseStatus);
+                  setLicense(await api.deactivateLicense());
                   return api.getSettings();
                 }, "Licence removed.")
               }
@@ -147,8 +148,9 @@ export function Settings() {
       ) : (
         <div className="stack-tight">
           <p className="text-muted">
-            Free covers unlimited store generation with waitlist capture. Premium
-            adds Stripe checkout on your generated stores and automated backups.
+            Free covers unlimited store generation, live preview, themes, bundled
+            images and waitlist capture. Premium adds Stripe checkout on your
+            generated stores and automated backups.
           </p>
           <Field
             label="Licence key"
@@ -180,44 +182,98 @@ export function Settings() {
 
       <hr className="hr" />
 
+      <h3>AI</h3>
+      <p className="text-muted">
+        Optional, and used only where you ask for it — rewriting product copy and
+        writing image alt text. Whichever provider you pick, the request goes
+        from this machine straight to them on your own key and is billed to your
+        account.
+      </p>
+
+      <Field
+        label="Provider"
+        htmlFor="ai-provider"
+        hint="Switching provider doesn't touch either saved key."
+      >
+        <div className="seg" id="ai-provider">
+          {AI_PROVIDERS.map((option) => (
+            <label className="seg-opt" key={option}>
+              <input
+                type="radio"
+                name="ai-provider"
+                checked={provider === option}
+                disabled={busy}
+                onChange={() =>
+                  void run(
+                    () => api.setAiPreferences(option),
+                    `AI provider set to ${AI_PROVIDER_INFO[option].label}.`,
+                  )
+                }
+              />
+              {AI_PROVIDER_INFO[option].label}
+            </label>
+          ))}
+        </div>
+      </Field>
+
+      <Field
+        label="Model"
+        htmlFor="ai-model"
+        hint={`Used for ${providerInfo.label} requests.`}
+      >
+        <select
+          id="ai-model"
+          className="input"
+          disabled={busy}
+          value={modelFor(settings.ai, provider)}
+          onChange={(event) =>
+            void run(
+              () => api.setAiPreferences(provider, event.target.value),
+              "Model saved.",
+            )
+          }
+        >
+          {providerInfo.models.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <div className="grid-2">
+        <AiKeyField
+          provider="openrouter"
+          settings={settings}
+          busy={busy}
+          onRun={run}
+        />
+        <AiKeyField provider="gemini" settings={settings} busy={busy} onRun={run} />
+      </div>
+
+      <hr className="hr" />
+
       <h3>Checkout</h3>
       <SecretField
         label="Stripe secret key"
         hint={
           isPremium
-            ? "Used once, from this machine, to create the Stripe payment link baked into each store. Never written into a generated store."
+            ? "Used once, from this machine, to create Stripe payment links for static stores. Never written into a generated store. Stores deployed to Vercel or Netlify don't need it here at all — their own checkout function reads it from your host."
             : "Premium only. Free stores capture a waitlist instead of taking payment."
         }
         placeholder="sk_live_… or sk_test_…"
         meta={settings.stripe}
         busy={busy}
         onSave={(value) =>
-          void run(() => api.saveStripeKey(value), "Stripe key validated and saved.")
-        }
-        onClear={() =>
-          void run(() => api.deleteSecret("stripe_secret_key"), "Stripe key removed.")
-        }
-      />
-
-      <hr className="hr" />
-
-      <h3>AI features</h3>
-      <SecretField
-        label="OpenRouter API key"
-        hint="Powers the optional product-copy rewrite. Calls go straight from this machine to OpenRouter and are billed to your account."
-        placeholder="sk-or-v1-…"
-        meta={settings.openRouter}
-        busy={busy}
-        onSave={(value) =>
           void run(
-            () => api.saveOpenRouterKey(value),
-            "OpenRouter key validated and saved.",
+            () => api.saveStripeKey(value),
+            "Stripe key validated and saved.",
           )
         }
         onClear={() =>
           void run(
-            () => api.deleteSecret("openrouter_api_key"),
-            "OpenRouter key removed.",
+            () => api.deleteSecret("stripe_secret_key"),
+            "Stripe key removed.",
           )
         }
       />
@@ -306,6 +362,61 @@ export function Settings() {
           automated snapshots to a folder you pick.
         </Banner>
       )}
+    </div>
+  );
+}
+
+function AiKeyField({
+  provider,
+  settings,
+  busy,
+  onRun,
+}: {
+  provider: AiProvider;
+  settings: SettingsView;
+  busy: boolean;
+  onRun: (action: () => Promise<SettingsView>, message: string) => Promise<void>;
+}) {
+  const info = AI_PROVIDER_INFO[provider];
+  const meta = provider === "gemini" ? settings.gemini : settings.openRouter;
+  const inUse = settings.ai.provider === provider;
+
+  return (
+    <div className="stack-tight">
+      <SecretField
+        label={`${info.label} API key`}
+        hint={
+          inUse
+            ? "Currently in use for AI features. Validated when you save it."
+            : "Saved but not currently selected above."
+        }
+        placeholder={info.keyPlaceholder}
+        meta={meta}
+        busy={busy}
+        onSave={(value) =>
+          void onRun(
+            () => api.saveAiKey(provider, value),
+            `${info.label} key validated and saved.`,
+          )
+        }
+        onClear={() =>
+          void onRun(
+            () =>
+              api.deleteSecret(
+                provider === "gemini" ? "gemini_api_key" : "openrouter_api_key",
+              ),
+            `${info.label} key removed.`,
+          )
+        }
+      />
+      <button
+        type="button"
+        className="btn btn-ghost"
+        style={{ paddingLeft: 0 }}
+        onClick={() => void desktop.openExternal(info.keyUrl)}
+      >
+        Get a key →
+      </button>
     </div>
   );
 }

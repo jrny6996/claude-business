@@ -13,8 +13,10 @@ providers directly.
 1. Paste an AliExpress product URL.
 2. It scrapes and normalizes the listing — title, images, price, variants, ratings.
 3. You set a name, a look and a retail markup.
-4. It emits a plain **Astro** static site with Stripe checkout wired in.
-5. You deploy it to your own Vercel/Netlify account.
+4. It downloads the product images and emits a plain **Astro** site with checkout
+   wired in — a self-contained project with nothing pointing back at AliExpress.
+5. You set up a dev environment for it, preview it live, and deploy it to your
+   own Vercel/Netlify account.
 
 ## Layout
 
@@ -24,7 +26,7 @@ providers directly.
 | `apps/landing`             | Astro marketing site, deployed separately.                                                                                            |
 | `packages/shared`          | Zod schemas and types shared by everything: product, store config, settings, `Result`/`AppError`.                                     |
 | `packages/db`              | SQLite: migrations, repositories, encrypted secret storage, premium backup. All DB access goes through here.                          |
-| `packages/store-generator` | `scrape/` (URL → normalized product), `generate/` (product → Astro project), `stripe/` (BYOK payment links), `ai/` (BYOK OpenRouter). |
+| `packages/store-generator` | `scrape/` (URL → normalized product), `generate/` (product → Astro project), `assets/` (download images into the store), `stripe/` (BYOK payment links), `ai/` (BYOK OpenRouter + Gemini), `dev-env.ts`. |
 | `packages/api`             | Hono routes + services. Runs in-process inside Electron.                                                                              |
 | `packages/design-system`   | Modernist tokens/components for the app and landing page. Not used by generated stores.                                               |
 
@@ -34,6 +36,9 @@ providers directly.
 | --------------------------- | -------------------- | ------------------- |
 | Store generation            | unlimited            | unlimited           |
 | Live Astro preview + themes | yes                  | yes                 |
+| Bundled product images      | yes                  | yes                 |
+| AI copy + alt text (BYOK)   | yes                  | yes                 |
+| Per-store dev environment   | yes                  | yes                 |
 | Buy button                  | **waitlist capture** | **Stripe checkout** |
 | Automated backups           | no                   | yes                 |
 
@@ -70,7 +75,7 @@ npm run dev --workspace @repo/desktop
 Checks:
 
 ```bash
-npm run test           # 230 tests
+npm run test           # 326 tests
 npm run check-types
 npm run lint
 ```
@@ -96,9 +101,16 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
   Payment Links created at generation time. Either way checkout runs on Stripe's
   hosted page; we take no fee and see no card data, and a test asserts no
   `sk_live`/`sk_test` string ever appears in generated output.
-- **OpenRouter (BYOK).** AI copy rewriting calls OpenRouter directly with the
-  user's key and is billed to their account. Optional: with no key set, the store
-  still generates and the API returns a warning instead of failing.
+- **AI (BYOK, two providers).** Copy rewriting and image alt text call
+  **OpenRouter or Google Gemini** directly with the user's own key, billed to
+  their account. The provider is a preference independent of which keys are
+  stored, so switching never touches a key. Optional throughout: with no key set,
+  or with the provider down, the store still generates and the API returns a
+  warning instead of failing.
+- **Images (BYO, by download).** Product images are downloaded onto the user's
+  machine and written into their project, so the deployed store serves them from
+  the user's own host. We never re-host or transcode an image — a store that
+  hotlinks a marketplace CDN isn't one the user owns.
 - **Hosting (BYO).** Generated stores are static output. We emit the deploy
   command; the host's own CLI performs the upload. We never serve storefront
   traffic.
@@ -125,7 +137,17 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
 - **Preview is the real site.** `Stores → Preview` runs the generated store's
   own `astro dev` server and frames it, so it cannot drift from what deploys.
   Astro can't start without a resolvable `node_modules`, so one shared runtime
-  is symlinked into each store rather than installed per store.
+  is symlinked into each store rather than installed per store. `@repo/desktop`
+  owns that runtime (`astro` plus both adapters) — the versions must match what
+  the generator pins into each store.
+- **The shared runtime is not the user's.** That symlink resolves only on this
+  machine, inside this app. `Stores → Dev environment` replaces it with a real
+  `npm install` the user owns, which is what makes the folder portable. The link
+  is deleted before installing, or npm would follow it and install into the
+  shared runtime — `rm` on a symlink removes the link, not the target.
+- **Bundled images are project-relative.** After download, a `ProductImage.url`
+  is `/images/product-01.jpg` rather than an absolute URL, which is why
+  `ImageSrcSchema` accepts both.
 - **The tier gate lives in one function.** `resolveCheckout` in
   `packages/api/src/services/stores.ts`; both create and regenerate route
   through it, so a regenerate can't move a store between tiers.

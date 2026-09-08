@@ -1,5 +1,5 @@
 interface BannerProps {
-  tone?: "accent" | "neutral";
+  tone?: "accent" | "neutral" | "success";
   title?: string;
   children?: React.ReactNode;
   items?: string[];
@@ -8,7 +8,7 @@ interface BannerProps {
 /** Inline messaging: warnings from a generation, errors, key prompts. */
 export function Banner({ tone = "accent", title, children, items }: BannerProps) {
   return (
-    <div className={tone === "accent" ? "banner" : "banner banner-neutral"}>
+    <div className={`banner${tone === "accent" ? "" : ` banner-${tone}`}`}>
       {title && <strong>{title}</strong>}
       {children}
       {items && items.length > 0 && (

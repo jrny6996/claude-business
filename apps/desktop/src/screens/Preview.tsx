@@ -2,16 +2,7 @@ import { useEffect, useState } from "react";
 import type { Store, Theme } from "@repo/shared";
 import { ApiError, api, desktop } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
-import { Field } from "../components/Field.js";
-
-const PRESETS: Theme["preset"][] = [
-  "minimal",
-  "bold",
-  "editorial",
-  "warm",
-  "noir",
-];
-const FONTS: Theme["fontStack"][] = ["system", "serif", "mono"];
+import { ThemePicker } from "../components/ThemePicker.js";
 
 /**
  * Live preview of a generated store.
@@ -23,11 +14,9 @@ const FONTS: Theme["fontStack"][] = ["system", "serif", "mono"];
  */
 export function Preview({
   store,
-  onClose,
   onChanged,
 }: {
   store: Store;
-  onClose: () => void;
   onChanged: () => void;
 }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -97,31 +86,6 @@ export function Preview({
 
   return (
     <div className="stack">
-      <div className="section-head">
-        <h2>{store.config.storeName}</h2>
-        <div className="inline-actions">
-          {url && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => void desktop.openExternal(url)}
-            >
-              Open in browser
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => {
-              void desktop.stopPreview(store.id);
-              onClose();
-            }}
-          >
-            Close preview
-          </button>
-        </div>
-      </div>
-
       {error && (
         <Banner title={error.message}>
           {error.detail && <div className="mono">{error.detail}</div>}
@@ -145,72 +109,42 @@ export function Preview({
         </div>
 
         <aside className="stack-tight">
-          <div className="card-kicker">Theme</div>
-
-          <Field label="Preset" htmlFor="theme-preset">
-            <select
-              id="theme-preset"
-              className="input"
-              value={theme.preset}
-              disabled={savingTheme}
-              onChange={(event) =>
-                void applyTheme({
-                  ...theme,
-                  preset: event.target.value as Theme["preset"],
-                })
-              }
-            >
-              {PRESETS.map((preset) => (
-                <option key={preset} value={preset}>
-                  {preset}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label="Accent" htmlFor="theme-accent">
-            <input
-              id="theme-accent"
-              className="input"
-              type="color"
-              value={theme.accentColor}
-              disabled={savingTheme}
-              onChange={(event) =>
-                void applyTheme({ ...theme, accentColor: event.target.value })
-              }
-            />
-          </Field>
-
-          <Field label="Type" htmlFor="theme-font">
-            <select
-              id="theme-font"
-              className="input"
-              value={theme.fontStack}
-              disabled={savingTheme}
-              onChange={(event) =>
-                void applyTheme({
-                  ...theme,
-                  fontStack: event.target.value as Theme["fontStack"],
-                })
-              }
-            >
-              {FONTS.map((font) => (
-                <option key={font} value={font}>
-                  {font}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <div className="subhead">Theme</div>
+          <ThemePicker theme={theme} disabled={savingTheme} onChange={(next) => void applyTheme(next)} />
 
           <p className="text-muted" style={{ fontSize: 12 }}>
             Changes are written to the store on disk and reload here. This is the
             real Astro site, so what you see is what deploys.
           </p>
 
+          <div className="inline-actions">
+            {url && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => void desktop.openExternal(url)}
+              >
+                Open in browser
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                void desktop.stopPreview(store.id);
+                setUrl(null);
+                setStatus("Preview stopped.");
+              }}
+              disabled={!url}
+            >
+              Stop server
+            </button>
+          </div>
+
           {store.config.checkout.provider === "waitlist" && (
             <Banner tone="neutral" title="Waitlist store">
               Free stores capture emails instead of taking payment. Upgrade to
-              premium and regenerate to enable Stripe checkout.
+              premium and rebuild to enable Stripe checkout.
             </Banner>
           )}
         </aside>

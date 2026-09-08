@@ -1,69 +1,54 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Store } from "@repo/shared";
-import { ApiError, api, desktop } from "../bridge.js";
+import { ApiError, api } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
-import { Preview } from "./Preview.js";
+import { StoreDetail } from "./StoreDetail.js";
 
-interface DeployInstructions {
-  provider: string;
-  projectDir: string;
-  command: string;
-  tokenEnvVar: string;
-  tokenPresent: boolean;
-  notes: string[];
-}
-
-/** Generated stores, and how to get each one online. */
-export function Stores({ reloadKey }: { reloadKey: number }) {
+/**
+ * The generated stores, as a list you can scan.
+ *
+ * This used to be a table whose last column held five ghost buttons per row,
+ * which made every store look like a settings panel. Actions live on the
+ * detail screen now; the list's job is to let you find a store and see its
+ * state at a glance.
+ */
+export function Stores({
+  reloadKey,
+  openStoreId,
+  onOpenStore,
+}: {
+  reloadKey: number;
+  openStoreId: string | null;
+  onOpenStore: (storeId: string | null) => void;
+}) {
   const [stores, setStores] = useState<Store[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
-  const [instructions, setInstructions] = useState<DeployInstructions | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [previewing, setPreviewing] = useState<Store | null>(null);
 
-  const load = async () => {
-    setLoading(true);
+  const load = useCallback(async () => {
     try {
-      setStores((await api.listStores()) as Store[]);
+      setStores(await api.listStores());
       setError(null);
     } catch (cause) {
       setError(cause as ApiError);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void load();
-  }, [reloadKey]);
+  }, [load, reloadKey]);
 
-  const showDeploy = async (id: string, provider: string) => {
-    setSelected(id);
-    try {
-      setInstructions((await api.deployInstructions(id, provider)) as DeployInstructions);
-      setError(null);
-    } catch (cause) {
-      setInstructions(null);
-      setError(cause as ApiError);
-    }
-  };
+  const open = openStoreId
+    ? (stores.find((store) => store.id === openStoreId) ?? null)
+    : null;
 
-  const remove = async (id: string) => {
-    try {
-      await api.deleteStore(id);
-      await load();
-    } catch (cause) {
-      setError(cause as ApiError);
-    }
-  };
-
-  if (previewing) {
-    const current = stores.find((s) => s.id === previewing.id) ?? previewing;
+  if (open) {
     return (
-      <Preview
-        store={current}
-        onClose={() => setPreviewing(null)}
+      <StoreDetail
+        store={open}
+        onBack={() => onOpenStore(null)}
         onChanged={() => void load()}
       />
     );
@@ -84,122 +69,73 @@ export function Stores({ reloadKey }: { reloadKey: number }) {
         <div className="spinner">Loading…</div>
       ) : stores.length === 0 ? (
         <div className="empty">
-          No stores yet. Generate one from the New store tab.
+          <div className="empty-title">No stores yet</div>
+          Paste an AliExpress product link in the New store tab and you'll have a
+          deployable storefront in about a minute.
         </div>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Store</th>
-              <th>Product</th>
-              <th>Checkout</th>
-              <th>Status</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {stores.map((store) => (
-              <tr key={store.id}>
-                <td>
-                  <strong>{store.config.storeName}</strong>
-                  <div className="text-muted" style={{ fontSize: 12 }}>
-                    {new Date(store.createdAt).toLocaleDateString()}
-                  </div>
-                </td>
-                <td style={{ maxWidth: 260 }}>{store.product.title}</td>
-                <td>
-                  {store.config.checkout.provider === "stripe" &&
-                  store.config.checkout.paymentLinkUrl ? (
-                    <span className="tag tag-accent">Stripe</span>
-                  ) : store.config.checkout.provider === "waitlist" ? (
-                    <span className="tag tag-outline">Waitlist</span>
-                  ) : (
-                    <span className="tag tag-neutral">None</span>
-                  )}
-                </td>
-                <td>
-                  <span className="tag tag-outline">{store.status}</span>
-                </td>
-                <td>
-                  <div className="inline-actions">
-                    {store.outputDir && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => setPreviewing(store)}
-                      >
-                        Preview
-                      </button>
-                    )}
-                    {store.outputDir && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => void desktop.openPath(store.outputDir as string)}
-                      >
-                        Folder
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => void showDeploy(store.id, "vercel")}
-                    >
-                      Deploy
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() => void remove(store.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {instructions && selected && (
-        <div className="stack-tight">
-          <div className="section-head">
-            <h3 style={{ margin: 0 }}>Deploy to your own hosting</h3>
-            <div className="seg">
-              {["vercel", "netlify"].map((provider) => (
-                <label className="seg-opt" key={provider}>
-                  <input
-                    type="radio"
-                    name="deploy-provider"
-                    checked={instructions.provider === provider}
-                    onChange={() => void showDeploy(selected, provider)}
-                  />
-                  {provider}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <p className="text-muted">
-            The store is a plain Astro project on your machine and deploys to
-            your own account. We never host storefront traffic.
-          </p>
-
-          <div className="code-block">
-            {`cd ${instructions.projectDir}\nnpm install\nnpm run build\n${instructions.tokenEnvVar}=<your token> ${instructions.command}`}
-          </div>
-
-          {!instructions.tokenPresent && (
-            <Banner title="No deploy token saved">
-              Add a {instructions.provider} token in Settings, or paste it into the
-              command above yourself.
-            </Banner>
-          )}
-
-          <Banner tone="neutral" items={instructions.notes} />
+        <div className="store-list">
+          {stores.map((store) => (
+            <StoreRow
+              key={store.id}
+              store={store}
+              onOpen={() => onOpenStore(store.id)}
+            />
+          ))}
         </div>
       )}
     </div>
   );
+}
+
+function StoreRow({ store, onOpen }: { store: Store; onOpen: () => void }) {
+  const image = store.product.images[0];
+
+  return (
+    <div className="store-row">
+      {/* A bundled image is a project-relative path, which the app frame can't
+          resolve — only remote URLs are previewable here. */}
+      {image && /^https?:/.test(image.url) ? (
+        <img className="grayscale" src={image.url} alt="" />
+      ) : (
+        <div
+          style={{ width: 72, height: 72, background: "var(--color-neutral-200)" }}
+          aria-hidden="true"
+        />
+      )}
+
+      <div className="store-row-meta">
+        <div className="store-row-name">{store.config.storeName}</div>
+        <div className="store-row-sub">{store.product.title}</div>
+        <div className="tag-row">
+          <CheckoutTag store={store} />
+          <span className="tag tag-neutral">{store.status}</span>
+          {store.deployedUrl && <span className="tag tag-outline">live</span>}
+          <span className="tag tag-neutral">
+            {new Date(store.createdAt).toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+
+      <button type="button" className="btn btn-secondary" onClick={onOpen}>
+        Open
+      </button>
+    </div>
+  );
+}
+
+export function CheckoutTag({ store }: { store: Store }) {
+  const { checkout } = store.config;
+
+  if (checkout.provider === "stripe") {
+    return (
+      <span className="tag tag-accent">
+        Stripe {checkout.mode === "api" ? "checkout" : "payment links"}
+      </span>
+    );
+  }
+  if (checkout.provider === "waitlist") {
+    return <span className="tag tag-outline">Waitlist</span>;
+  }
+  return <span className="tag tag-neutral">No checkout</span>;
 }
