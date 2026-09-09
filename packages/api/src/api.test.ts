@@ -328,7 +328,7 @@ describe("settings", () => {
     it("switches provider and remembers a model per provider", async () => {
       await harness.request("PUT", "/api/settings/ai", {
         provider: "gemini",
-        model: "gemini-3-pro",
+        model: "gemini-2.5-pro",
       });
       const { payload } = await harness.request("PUT", "/api/settings/ai", {
         provider: "openrouter",
@@ -339,7 +339,7 @@ describe("settings", () => {
         .ai;
       expect(ai.provider).toBe("openrouter");
       expect(ai.models).toEqual({
-        gemini: "gemini-3-pro",
+        gemini: "gemini-2.5-pro",
         openrouter: "anthropic/claude-sonnet-5",
       });
     });

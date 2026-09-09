@@ -21,7 +21,15 @@ export interface AiProviderInfo {
   keyPlaceholder: string;
   /** Model used when the user hasn't picked one. */
   defaultModel: string;
-  /** Models offered in the picker. Free text is still accepted. */
+  /**
+   * Models offered in the picker. Free text is still accepted.
+   *
+   * These are provider model *ids*, not display names, and a wrong one fails
+   * as a 404 that reads like a rejected key — so only ids verified against the
+   * provider's own list belong here. Prefer stable ids over `-preview` ones:
+   * a preview id is withdrawn when it graduates, which breaks the default for
+   * everyone on the next release.
+   */
   models: readonly string[];
 }
 
@@ -35,7 +43,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
     models: [
       "anthropic/claude-haiku-4.5",
       "anthropic/claude-sonnet-5",
-      "google/gemini-3-flash",
+      "google/gemini-3.5-flash",
       "openai/gpt-5-mini",
       "meta-llama/llama-4-maverick",
     ],
@@ -45,8 +53,13 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
     label: "Google Gemini",
     keyUrl: "https://aistudio.google.com/apikey",
     keyPlaceholder: "AIza…",
-    defaultModel: "gemini-3-flash",
-    models: ["gemini-3-flash", "gemini-3-pro", "gemini-2.5-flash"],
+    defaultModel: "gemini-3.5-flash",
+    models: [
+      "gemini-3.5-flash",
+      "gemini-3.5-flash-lite",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+    ],
   },
 };
 

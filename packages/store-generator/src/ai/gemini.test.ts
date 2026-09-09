@@ -91,11 +91,11 @@ describe("GeminiClient", () => {
 
     await new GeminiClient({
       apiKey: "AIza",
-      model: "gemini-3-pro",
+      model: "gemini-2.5-pro",
       fetchImpl,
     }).complete("s", "u");
 
-    expect(calls[0]?.url).toContain("/models/gemini-3-pro:generateContent");
+    expect(calls[0]?.url).toContain("/models/gemini-2.5-pro:generateContent");
   });
 
   // Google reports a bad key as a 400 as often as a 401, so the body matters.
@@ -180,7 +180,7 @@ describe("createAiClient", () => {
   it("builds a Gemini client when asked for one", async () => {
     const client = await createAiClient({ provider: "gemini", apiKey: "AIza" });
     expect(client.provider).toBe("gemini");
-    expect(client.model).toBe("gemini-3-flash");
+    expect(client.model).toBe("gemini-3.5-flash");
   });
 
   it("defaults to OpenRouter, which is what callers used before", async () => {

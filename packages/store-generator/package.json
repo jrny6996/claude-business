@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./theme": {
+      "types": "./dist/generate/templates/styles.d.ts",
+      "default": "./dist/generate/templates/styles.js"
     }
   },
   "scripts": {

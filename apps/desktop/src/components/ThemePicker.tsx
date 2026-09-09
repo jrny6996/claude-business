@@ -1,5 +1,9 @@
 import type { Theme } from "@repo/shared";
-import { THEME_PRESET_TOKENS } from "@repo/store-generator";
+// Imported from the package's `/theme` subpath, not its barrel: the barrel
+// re-exports generate/ and assets/, which pull in `node:fs/promises`. Vite
+// externalizes that for the browser, so the renderer's module graph threw on
+// load and the window came up blank.
+import { THEME_PRESET_TOKENS } from "@repo/store-generator/theme";
 import { Field } from "./Field.js";
 
 /**
