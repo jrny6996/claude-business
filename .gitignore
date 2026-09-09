@@ -26,6 +26,10 @@ coverage
 out/
 build
 dist
+dist-electron/
+
+# Electron packaged output
+release/
 
 
 # Debug
