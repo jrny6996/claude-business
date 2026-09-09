@@ -1,0 +1,110 @@
+---
+/**
+ * Licence sign-in.
+ *
+ * There are no accounts and no passwords: a licence key *is* the credential,
+ * and it is verified by signature rather than by asking a server. That means
+ * this page can confirm a licence with no backend at all, and the app can do
+ * the same offline.
+ *
+ * The page reads a key only to show what it covers — activation happens in the
+ * app. Nothing is transmitted anywhere.
+ */
+---
+
+<section class="wrap section" id="signin">
+  <div class="section-label">Your licence</div>
+  <p class="lead">
+    Premium is a licence key, not an account. Paste yours to check what it
+    covers, then activate it in the app under Settings → Licence.
+  </p>
+
+  <form class="signin-form" data-signin>
+    <div class="field">
+      <label for="license-input">Licence key</label>
+      <input
+        id="license-input"
+        class="input"
+        name="key"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="eyJ2IjoxLCJlbWFpbCI6…"
+      />
+    </div>
+    <button class="btn btn-primary" type="submit">Check licence</button>
+  </form>
+
+  <div class="signin-result" data-signin-result hidden></div>
+
+  <p class="footnote">
+    Your key never leaves this page — it is decoded in your browser. Lost it?
+    It's on your purchase receipt.
+  </p>
+</section>
+
+<script>
+  const form = document.querySelector("[data-signin]");
+  const result = document.querySelector("[data-signin-result]");
+
+  const show = (message, tone) => {
+    if (!(result instanceof HTMLElement)) return;
+    result.hidden = false;
+    result.className = tone === "ok" ? "signin-result is-ok" : "signin-result is-bad";
+    result.textContent = message;
+  };
+
+  const decode = (part) => {
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  };
+
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!(form instanceof HTMLFormElement)) return;
+
+    const key = String(new FormData(form).get("key") ?? "").trim();
+    const parts = key.split(".");
+
+    if (parts.length !== 2) {
+      show("That doesn't look like a licence key. Copy it again from your receipt.", "bad");
+      return;
+    }
+
+    let payload;
+    try {
+      payload = decode(parts[0]);
+    } catch {
+      show("That key couldn't be read. Copy it again from your receipt.", "bad");
+      return;
+    }
+
+    if (!payload || payload.v !== 1 || !payload.tier) {
+      show("That key isn't in a format this version understands.", "bad");
+      return;
+    }
+
+    const expired =
+      payload.expiresAt && Date.parse(payload.expiresAt) <= Date.now();
+
+    if (expired) {
+      show(
+        `That licence covered ${payload.tier} for ${payload.email} and expired on ${String(payload.expiresAt).slice(0, 10)}.`,
+        "bad",
+      );
+      return;
+    }
+
+    // Deliberately not called "valid": the signature is checked in the app,
+    // which has the public key. Claiming more than we verified here would be a
+    // lie a forged key could exploit.
+    show(
+      `This key claims ${payload.tier} for ${payload.email}${
+        payload.expiresAt
+          ? `, through ${String(payload.expiresAt).slice(0, 10)}`
+          : ", with no expiry"
+      }. Activate it in the app to verify and switch it on.`,
+      "ok",
+    );
+  });
+</script>

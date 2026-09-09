@@ -1,17 +1,61 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+  "globalEnv": [
+    "BACKUP_MAX_COUNT",
+    "BACKUP_MAX_UPLOAD_BYTES",
+    "BACKUP_QUOTA_BYTES",
+    "DSV_CLOUD_URL",
+    "DSV_DEV_SERVER_URL",
+    "DSV_LICENSE_PRIVATE_KEY",
+    "DSV_LICENSE_PUBLIC_KEY",
+    "DSV_PREVIEW_RUNTIME",
+    "HOME",
+    "LICENSE_FROM_EMAIL",
+    "PATH",
+    "PREMIUM_PRICE_ID",
+    "RESEND_API_KEY",
+    "S3_ACCESS_KEY_ID",
+    "S3_BUCKET",
+    "S3_ENDPOINT",
+    "S3_PREFIX",
+    "S3_REGION",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_SESSION_TOKEN",
+    "SITE_URL",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "URL"
+  ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*"
+      ],
+      "outputs": [
+        "dist/**",
+        "dist-electron/**"
+      ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": [
+        "^lint"
+      ]
     },
     "check-types": {
-      "dependsOn": ["^check-types"]
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "test": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": []
     },
     "dev": {
       "cache": false,

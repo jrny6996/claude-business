@@ -1,0 +1,36 @@
+{
+  "name": "@repo/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check-types": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0"
+  },
+  "dependencies": {
+    "@repo/db": "*",
+    "@repo/shared": "*",
+    "@repo/store-generator": "*",
+    "hono": "4.13.5",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@repo/cloud": "*",
+    "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
+    "@types/node": "26.4.1",
+    "eslint": "10.9.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

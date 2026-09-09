@@ -1,0 +1,60 @@
+---
+/**
+ * Download links.
+ *
+ * Artifact names are derived from the same electron-builder config that
+ * produces them, and the release base is configurable so a fork or a private
+ * mirror doesn't need a code change. Nothing here is hosted by us — releases
+ * live on the repo host.
+ */
+const version = import.meta.env.PUBLIC_APP_VERSION ?? "0.1.0";
+const base =
+  import.meta.env.PUBLIC_RELEASE_BASE ??
+  "https://github.com/jrny6996/claude-business/releases/latest/download";
+
+const builds = [
+  {
+    os: "macOS",
+    note: "Apple silicon & Intel · .dmg",
+    file: `Store-Validator-${version}.dmg`,
+  },
+  {
+    os: "Windows",
+    note: "64-bit installer · .exe",
+    file: `Store-Validator-Setup-${version}.exe`,
+  },
+  {
+    os: "Linux",
+    note: "AppImage · x86_64",
+    file: `Store-Validator-${version}.AppImage`,
+  },
+];
+---
+
+<section class="wrap section" id="download">
+  <div class="section-label">Download</div>
+  <p class="lead">
+    Free to use, no account needed. Generate as many stores as you like and
+    deploy them to your own hosting.
+  </p>
+
+  <div class="cells cells-3" style="margin-top: var(--space-6)">
+    {
+      builds.map((build) => (
+        <div class="cell">
+          <h3>{build.os}</h3>
+          <p class="card-body">{build.note}</p>
+          <a class="btn btn-primary btn-block" href={`${base}/${build.file}`} download>
+            Download for {build.os}
+          </a>
+        </div>
+      ))
+    }
+  </div>
+
+  <p class="footnote">
+    Version {version}. Builds are unsigned for now, so macOS and Windows will
+    warn on first launch — right-click → Open on macOS, "More info" → "Run
+    anyway" on Windows. Source and checksums are on the releases page.
+  </p>
+</section>

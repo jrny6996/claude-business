@@ -1,0 +1,56 @@
+# Packaging for the desktop app. `npm run package` produces the installers the
+# landing page links to; `npm run package:dir` produces an unpacked build, which
+# is enough to verify this config without signing or full installer tooling.
+appId: com.storevalidator.app
+productName: Store Validator
+# Without this the binary is named after the npm package (@repo/desktop).
+executableName: store-validator
+copyright: Copyright © 2026 Store Validator
+
+# Artifact names are pinned because the landing page links to them directly.
+# Keep these in step with apps/landing/src/components/Download.astro.
+artifactName: Store-Validator-${version}.${ext}
+
+directories:
+  output: release
+  buildResources: build
+
+# The renderer bundle, the compiled main process, and nothing else from source.
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+  - "!**/*.map"
+
+# better-sqlite3 ships a native binding that must not be bundled into the asar.
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+
+# Astro is needed at runtime for the store preview's dev server.
+extraMetadata:
+  main: dist-electron/main.js
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  maintainer: Store Validator
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  # Unsigned by default: signing needs an Apple Developer identity, which is a
+  # release-time decision rather than a build-time one.
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: Store-Validator-Setup-${version}.${ext}
+
+publish: null
