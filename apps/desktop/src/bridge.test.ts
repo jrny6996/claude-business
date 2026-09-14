@@ -1,3 +1,4 @@
+import { createApp } from "@repo/api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, call, desktop, type DesktopBridge } from "./bridge.js";
 
@@ -216,5 +217,55 @@ describe("desktop", () => {
         code: "INTERNAL",
       });
     });
+  });
+});
+
+/** Matches a concrete path against a Hono route pattern, `:params` and all. */
+function matchesRoute(pattern: string, path: string): boolean {
+  const expected = pattern.split("/");
+  const actual = path.split("?")[0]!.split("/");
+  if (expected.length !== actual.length) return false;
+  return expected.every(
+    (segment, i) => segment.startsWith(":") || segment === actual[i],
+  );
+}
+
+/**
+ * Every endpoint the renderer calls has to exist on the API.
+ *
+ * Deleting the licence subsystem left `api.license()` behind pointing at a
+ * route that no longer existed, and because Settings loaded it alongside the
+ * things it actually needed, the whole screen rendered as "Unknown endpoint."
+ * The renderer and the API are separately typed and only meet over IPC, so
+ * nothing else catches this.
+ */
+describe("the bridge's endpoints", () => {
+  it("all exist on the API", async () => {
+    const routes = createApp({} as never).routes;
+    const called: { method: string; path: string }[] = [];
+    install({
+      request: vi.fn(async (method: string, path: string) => {
+        called.push({ method, path });
+        return { status: 200, body: { ok: true, value: {} } };
+      }),
+    });
+
+    // Arity-filled placeholders: every argument here lands in a path segment
+    // or a request body, and neither is validated on this side.
+    for (const method of Object.values(api)) {
+      await (method as (...args: unknown[]) => Promise<unknown>)(
+        ...Array.from({ length: method.length }, () => "x"),
+      );
+    }
+
+    expect(called.length).toBe(Object.keys(api).length);
+    const missing = called.filter(
+      ({ method, path }) =>
+        !routes.some(
+          (route) =>
+            route.method === method && matchesRoute(route.path, path),
+        ),
+    );
+    expect(missing).toEqual([]);
   });
 });

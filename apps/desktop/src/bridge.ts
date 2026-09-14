@@ -97,17 +97,6 @@ export interface CreateStoreResult {
   warnings: { code: string; message: string }[];
 }
 
-export interface LicenseStatus {
-  tier: "free" | "premium";
-  expiresAt: string | null;
-  license: {
-    hint: string;
-    email: string;
-    valid: boolean;
-    reason?: string;
-  } | null;
-}
-
 /** What the app knows about the signed-in account's subscription. */
 export interface AccountState {
   signedIn: boolean;
@@ -172,11 +161,6 @@ export const api = {
     ),
   recordDeployed: (id: string, deployedUrl: string) =>
     call<Store>("POST", `/api/deploy/${id}/deployed`, { deployedUrl }),
-  license: () => call<LicenseStatus>("GET", "/api/license"),
-  activateLicense: (key: string) =>
-    call<LicenseStatus>("POST", "/api/license/activate", { key }),
-  deactivateLicense: () => call<LicenseStatus>("DELETE", "/api/license"),
-
   // Accounts. A device token replaces pasting a licence each billing period;
   // the app fetches its own entitlement, so a renewal needs no action.
   account: () => call<AccountState>("GET", "/api/account"),

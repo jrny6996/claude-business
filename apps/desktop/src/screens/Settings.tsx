@@ -11,7 +11,6 @@ import {
   api,
   desktop,
   type AccountState,
-  type LicenseStatus,
 } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
 import { Field } from "../components/Field.js";
@@ -28,7 +27,6 @@ import { useToast } from "../components/Toast.js";
 export function Settings() {
   const toast = useToast();
   const [settings, setSettings] = useState<SettingsView | null>(null);
-  const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [account, setAccount] = useState<AccountState | null>(null);
   const [signinEmail, setSigninEmail] = useState("");
   const [signinCode, setSigninCode] = useState("");
@@ -38,13 +36,11 @@ export function Settings() {
 
   const load = async () => {
     try {
-      const [nextSettings, nextLicense, nextAccount] = await Promise.all([
+      const [nextSettings, nextAccount] = await Promise.all([
         api.getSettings(),
-        api.license(),
         api.account(),
       ]);
       setSettings(nextSettings);
-      setLicense(nextLicense);
       setAccount(nextAccount);
       setError(null);
 
@@ -87,7 +83,7 @@ export function Settings() {
     );
   }
 
-  const isPremium = (license?.tier ?? settings.profile.tier) === "premium";
+  const isPremium = (account?.tier ?? settings.profile.tier) === "premium";
   const provider = settings.ai.provider;
   const providerInfo = AI_PROVIDER_INFO[provider];
 
@@ -96,7 +92,7 @@ export function Settings() {
       <div className="section-head">
         <h2>Settings</h2>
         <span className={isPremium ? "tag tag-accent" : "tag tag-outline"}>
-          {license?.tier ?? settings.profile.tier}
+          {account?.tier ?? settings.profile.tier}
         </span>
       </div>
 
