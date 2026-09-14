@@ -3,9 +3,19 @@
 #
 # Needs root, and must be re-run after reinstalling Electron, because npm
 # restores the file with the invoking user's ownership.
+#
+# You may not need this at all: if a packaged Chrome or Chromium is installed,
+# the launch scripts borrow its already-granted helper and need no root.
 set -euo pipefail
 
 BINARY="$(node -p "require('node:path').join(require('node:path').dirname(require('electron')), 'chrome-sandbox')")"
+
+# The launch scripts move an unusable helper aside so Chromium will look at
+# CHROME_DEVEL_SANDBOX instead. Put it back before granting it.
+if [ ! -f "$BINARY" ] && [ -f "$BINARY.unusable" ]; then
+  echo "Restoring the displaced helper from $BINARY.unusable"
+  mv "$BINARY.unusable" "$BINARY"
+fi
 
 if [ ! -f "$BINARY" ]; then
   echo "chrome-sandbox not found at: $BINARY" >&2

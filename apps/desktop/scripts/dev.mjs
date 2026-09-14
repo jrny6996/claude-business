@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { context } from "esbuild";
 import electronPath from "electron";
-import { electronLaunchArgs } from "./electron-sandbox.mjs";
+import { electronLaunch } from "./electron-sandbox.mjs";
 
 const DEV_SERVER_URL = "http://localhost:5273";
 
@@ -38,6 +38,11 @@ const preloadCtx = await context({
 await Promise.all([mainCtx.rebuild(), preloadCtx.rebuild()]);
 await Promise.all([mainCtx.watch(), preloadCtx.watch()]);
 
+// Checked before Vite is spawned, not after: this can exit, and an exit with
+// Vite already running orphans it holding port 5273 — which then fails the
+// *next* run with "port already in use", hiding the real problem.
+const launch = await electronLaunch(["."]);
+
 const vite = spawn("npx", ["vite", "--port", "5273", "--strictPort"], {
   stdio: "inherit",
   shell: process.platform === "win32",
@@ -54,11 +59,11 @@ for (let attempt = 0; attempt < 60; attempt++) {
   }
 }
 
-// Checked before Vite work is wasted, and so the failure is explained rather
-// than surfacing as a SIGTRAP from the Electron binary.
-const electron = spawn(electronPath, await electronLaunchArgs(["."]), {
+// The failure is explained by electronLaunch above rather than surfacing as a
+// SIGTRAP from the Electron binary.
+const electron = spawn(electronPath, launch.args, {
   stdio: "inherit",
-  env: { ...process.env, DSV_DEV_SERVER_URL: DEV_SERVER_URL },
+  env: { ...process.env, ...launch.env, DSV_DEV_SERVER_URL: DEV_SERVER_URL },
 });
 
 const shutdown = async () => {

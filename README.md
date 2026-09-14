@@ -130,20 +130,32 @@ node node_modules/electron/install.js
 
 **3. Linux: Chromium needs a way to sandbox itself.** Otherwise Electron aborts
 before any of our code runs, with a `chrome-sandbox` message that reads like a
-corrupt install. It isn't — it's machine setup. Either:
+corrupt install. It isn't — it's machine setup.
 
-```bash
-npm run fix-sandbox --workspace @repo/desktop      # setuid the helper (redo after reinstalling Electron)
-```
+Often there is nothing to do: if a packaged Chrome or Chromium is installed,
+the launch scripts borrow its setuid helper through `CHROME_DEVEL_SANDBOX`.
+That helper was granted by root when that package was installed, so it needs no
+root from you. Chromium only consults the variable when there's no
+`chrome-sandbox` beside the Electron binary, so the bundled one — which npm
+leaves unusable and which Chromium would otherwise abort on — is moved aside to
+`chrome-sandbox.unusable` on first launch. `npm install` puts it back, still
+unusable, and the next launch moves it aside again.
 
-or allow unprivileged user namespaces, which recent Ubuntu blocks by default
-and which survives Electron reinstalls:
+Otherwise, allow unprivileged user namespaces, which recent Ubuntu blocks by
+default and which survives Electron reinstalls:
 
 ```bash
 sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 ```
 
-`npm start` checks for both and tells you which to run rather than failing
+or setuid the bundled helper, which has to be redone after every Electron
+reinstall (it also restores a displaced helper first):
+
+```bash
+npm run fix-sandbox --workspace @repo/desktop
+```
+
+`npm start` checks all three and tells you what to run rather than failing
 cryptically. There's an escape hatch, `DSV_DISABLE_SANDBOX=1`, but think before
 reaching for it: the app opens real AliExpress pages in a Chromium window to
 scrape them, so the renderer runs untrusted remote code and the sandbox is what
