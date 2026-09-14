@@ -94,7 +94,10 @@ export function buildStoreData(
       currency: ctx.currency,
       shippingPolicy: ctx.config.shippingPolicy,
       returnsPolicy: ctx.config.returnsPolicy,
-      theme: ctx.config.theme,
+      // The CSS tree is rendered into theme.css; repeating it here would put a
+      // second copy of the user's stylesheet in a data file nothing reads it
+      // from, and make every CSS edit a diff in two files.
+      theme: { ...ctx.config.theme, customCss: undefined },
     },
     product: {
       id: ctx.product.sourceId,

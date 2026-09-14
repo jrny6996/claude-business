@@ -376,6 +376,90 @@ select, input[type="number"] {
 }
 
 /** Waitlist capture styles, appended to the storefront's global sheet. */
+/**
+ * The four product-page arrangements, selected by `data-layout` on the body.
+ *
+ * Every layout renders identical markup and differs only here. That is the
+ * whole point: switching layout rewrites one stylesheet, so a running preview
+ * hot-reloads instead of restarting its dev server, and no layout can drift
+ * away from the components the others use.
+ *
+ * `split` is the default and needs no rules — it is what `.product` already is.
+ */
+export function layoutCss(): string {
+  return `
+/* ── Layouts ────────────────────────────────────────────────────────────────
+   Selected by data-layout on <body>. The default, "split", is .product above. */
+
+/* Stacked: gallery full width, buy box beneath it in a readable column.
+   The arrangement a phone gets anyway, chosen deliberately for a product whose
+   images earn more space than the price does. */
+[data-layout="stacked"] .product {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 32px;
+}
+
+[data-layout="stacked"] .buybox {
+  max-width: 34rem;
+  margin: 0 auto;
+}
+
+/* Editorial: a narrow measure and a buy box that follows you down the page.
+   For a product that needs to be argued for rather than just shown. */
+[data-layout="editorial"] .product {
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 56px;
+}
+
+[data-layout="editorial"] .buybox {
+  position: sticky;
+  top: 24px;
+}
+
+[data-layout="editorial"] .gallery-main {
+  aspect-ratio: 4 / 5;
+}
+
+[data-layout="editorial"] .prose {
+  max-width: 34rem;
+}
+
+/* Showcase: every image at once, no thumbnail strip to click through.
+   For a product bought on looks, where the gallery is the argument. */
+[data-layout="showcase"] .product {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+}
+
+[data-layout="showcase"] .gallery-thumbs {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+[data-layout="showcase"] .gallery-thumbs button {
+  aspect-ratio: 4 / 3;
+}
+
+[data-layout="showcase"] .gallery-main {
+  aspect-ratio: 4 / 3;
+}
+
+/* Sticky positioning needs a scroll container taller than the viewport; on a
+   phone the buy box just sits in the flow, and every layout is one column. */
+@media (max-width: 820px) {
+  [data-layout] .product {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+    padding: 28px 0;
+  }
+
+  [data-layout="editorial"] .buybox {
+    position: static;
+  }
+}
+`;
+}
+
 export function waitlistCss(): string {
   return `.waitlist { max-width: 320px; }
 

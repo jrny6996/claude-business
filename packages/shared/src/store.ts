@@ -13,6 +13,14 @@ export const ThemeSchema = z.object({
     .default("#2563eb"),
   fontStack: z.enum(["system", "serif", "mono"]).default("system"),
   /**
+   * How the product page arranges itself. Purely a CSS concern — every layout
+   * renders the same markup, so switching one is a stylesheet rewrite that HMR
+   * applies to a running preview rather than a rebuild.
+   */
+  layout: z
+    .enum(["split", "stacked", "editorial", "showcase"])
+    .default("split"),
+  /**
    * The user's own CSS, appended after the preset's tokens so it can override
    * them. Held as a validated tree rather than a string — see `css.ts` for why.
    */

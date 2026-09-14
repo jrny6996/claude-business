@@ -42,7 +42,7 @@ import {
   envExample,
   nvmrc,
 } from "./templates/dev-env.js";
-import { globalCss, themeCss, waitlistCss } from "./templates/styles.js";
+import { globalCss, layoutCss, themeCss, waitlistCss } from "./templates/styles.js";
 
 export * from "./context.js";
 // The desktop app draws a miniature of each preset in its theme picker; reading
@@ -96,7 +96,10 @@ export function generateSite(
     },
     { path: "src/lib/cart.ts", contents: cartLibTs() },
     { path: "src/styles/theme.css", contents: themeCss(ctx) },
-    { path: "src/styles/global.css", contents: globalCss() + waitlistCss() },
+    {
+      path: "src/styles/global.css",
+      contents: globalCss() + layoutCss() + waitlistCss(),
+    },
     { path: "src/layouts/Layout.astro", contents: layoutAstro() },
     { path: "src/components/Header.astro", contents: headerAstro() },
     { path: "src/components/Footer.astro", contents: footerAstro() },

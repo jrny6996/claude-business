@@ -414,3 +414,83 @@ describe("defaultOutputDirName", () => {
     );
   });
 });
+
+/**
+ * Layouts are CSS, not markup. Every layout emits the same components, which
+ * is what lets a layout change hot-reload a running preview instead of
+ * restarting it — and what stops one layout drifting away from the others.
+ */
+describe("layouts", () => {
+  const filesFor = (layout: string): Map<string, string> =>
+    new Map(
+      generateSite(
+        StoreConfigSchema.parse({ ...config, theme: { ...config.theme, layout } }),
+        product,
+        { now },
+      ).files.map((f) => [f.path, f.contents]),
+    );
+
+  it("defaults to split", () => {
+    expect(config.theme.layout).toBe("split");
+  });
+
+  it("puts the chosen layout on the body, where CSS can see it", () => {
+    const data = JSON.parse(filesFor("editorial").get("src/data/store.json")!);
+
+    expect(data.store.theme.layout).toBe("editorial");
+    expect(filesFor("editorial").get("src/layouts/Layout.astro")).toContain(
+      "data-layout={store.store.theme.layout}",
+    );
+  });
+
+  it("emits identical markup for every layout", () => {
+    const markupOf = (layout: string) =>
+      [...filesFor(layout)]
+        .filter(([path]) => path.endsWith(".astro"))
+        .map(([path, contents]) => `${path}\n${contents}`)
+        .join("\n");
+
+    expect(markupOf("showcase")).toBe(markupOf("split"));
+    expect(markupOf("stacked")).toBe(markupOf("editorial"));
+  });
+
+  it("ships rules for every layout the schema allows", () => {
+    const css = filesFor("split").get("src/styles/global.css")!;
+
+    for (const layout of ["stacked", "editorial", "showcase"]) {
+      expect(css).toContain(`[data-layout="${layout}"]`);
+    }
+  });
+
+  it("collapses every layout to one column on a phone", () => {
+    const css = filesFor("editorial").get("src/styles/global.css")!;
+
+    expect(css).toContain("[data-layout] .product");
+    // Sticky needs a scrolling viewport; on a phone it just eats the screen.
+    expect(css).toContain('[data-layout="editorial"] .buybox {\n    position: static;');
+  });
+
+  it("keeps the custom CSS out of store.json, where nothing reads it", () => {
+    const withCss = StoreConfigSchema.parse({
+      ...config,
+      theme: {
+        ...config.theme,
+        customCss: {
+          rules: [
+            {
+              selector: ".buy",
+              declarations: [{ property: "color", value: "red" }],
+              nested: [],
+            },
+          ],
+        },
+      },
+    });
+    const files = new Map(
+      generateSite(withCss, product, { now }).files.map((f) => [f.path, f.contents]),
+    );
+
+    expect(files.get("src/data/store.json")).not.toContain(".buy");
+    expect(files.get("src/styles/theme.css")).toContain(".buy");
+  });
+});

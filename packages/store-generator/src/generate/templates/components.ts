@@ -40,7 +40,7 @@ const pageDescription = description ?? store.store.tagline ?? store.product.titl
     <meta name="generator" content={Astro.generator} />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
-  <body>
+  <body data-layout={store.store.theme.layout}>
     <Header />
     <main>
       <slot />
