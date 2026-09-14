@@ -1,0 +1,157 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Download from "../components/Download.astro";
+import Pricing from "../components/Pricing.astro";
+import SignIn from "../components/SignIn.astro";
+
+const title = "Store Validator — test a product before you commit to it";
+const description =
+  "Paste an AliExpress link, get a real storefront you deploy to your own hosting. Bring your own Stripe key and your own AI key, so there are no hosting or AI costs baked into the price.";
+
+const steps = [
+  {
+    index: "01",
+    heading: "Paste the link",
+    body: "Drop in an AliExpress product URL. The app reads the title, images, price, variants and ratings, and shows you exactly what it found before you commit.",
+  },
+  {
+    index: "02",
+    heading: "Set your margin",
+    body: "Pick a markup, a name and a look. Prices are marked up consistently across every variant, with charm pricing if you want it.",
+  },
+  {
+    index: "03",
+    heading: "Deploy it yourself",
+    body: "Out comes a plain Astro project with Stripe checkout wired in. Push it to your own Vercel or Netlify account and start sending traffic.",
+  },
+];
+
+const bring = [
+  {
+    heading: "Your Stripe keys",
+    body: "Checkout runs on Stripe's own hosted page, created with your key from your machine. Payments land in your account. We never touch the money, and there is no platform fee to pay us.",
+  },
+  {
+    heading: "Your hosting",
+    body: "Generated stores are ordinary static sites. You deploy them to your own Vercel or Netlify account, so your traffic is yours — and no storefront bandwidth is priced into the tool.",
+  },
+];
+
+const generated = [
+  "A product page with a gallery, variant picker and live price updates",
+  "Stripe-hosted checkout, created against your own account",
+  "Cart that works without a backend",
+  "Shipping and returns pages you can edit",
+  "Static output — plain HTML, CSS and JS, no server to run",
+  "Every product detail in one editable JSON file",
+  "Product images downloaded into the project, not hotlinked from AliExpress",
+  "A real dev setup — npm install, npm run dev, and DEVELOPMENT.md to explain it",
+];
+---
+
+<Layout title={title} description={description}>
+  <header class="nav">
+    <span class="nav-brand">Store Validator</span>
+    <a href="#how">How it works</a>
+    <a href="#bring">What you bring</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#download">Download</a>
+    <a href="#signin">Subscribed?</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <p class="hero-kicker">Product validation, not a storefront subscription</p>
+        <h1>Find out if a product sells before you build a business on it.</h1>
+        <p class="hero-lede">
+          Paste an AliExpress link. Get a real storefront — product page,
+          variants, Stripe checkout — that you deploy to your own hosting in a
+          few minutes. Kill it just as fast when the numbers say no.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#download">Download free</a>
+          <a class="hero-link" href="#how">See how it works</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap section" id="how">
+      <div class="section-label">How it works</div>
+      <div class="cells cells-3">
+        {
+          steps.map((step) => (
+            <div class="cell">
+              <div class="cell-index">{step.index}</div>
+              <h3>{step.heading}</h3>
+              <p class="card-body">{step.body}</p>
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <section class="wrap section" id="bring">
+      <div class="section-label">What you bring</div>
+      <p class="lead">
+        Most tools in this category rent you their hosting and their AI, then
+        price both into a monthly fee whether you use them or not. This one
+        doesn't have either — you bring your own keys, and you pay the providers
+        directly at cost.
+      </p>
+      <div class="cells cells-2" style="margin-top: var(--space-6)">
+        {
+          bring.map((item) => (
+            <div class="cell">
+              <h3>{item.heading}</h3>
+              <p class="card-body">{item.body}</p>
+            </div>
+          ))
+        }
+      </div>
+      <p class="footnote">
+        Keys are stored encrypted on your machine, in your OS keychain where one
+        is available, and are sent only to the service they belong to. Optional
+        AI copy and alt text run on your own OpenRouter or Google Gemini key,
+        called straight from your machine and billed to your account, not ours.
+      </p>
+    </section>
+
+    <section class="wrap section">
+      <div class="section-label">What it generates</div>
+      <ul class="list-plain">
+        {generated.map((item) => <li>{item}</li>)}
+      </ul>
+    </section>
+
+    <section class="wrap section">
+      <div class="section-label">Who it's for</div>
+      <p class="lead">
+        Solo and small-team dropshippers who test a lot of products and want the
+        cost of a test to be close to zero. If you can paste a link and run a
+        deploy command, this fits. If you want someone else to host your store
+        and mark up the bandwidth, it doesn't.
+      </p>
+    </section>
+
+    <Pricing />
+
+    <Download />
+
+    <SignIn />
+  </main>
+
+  <section class="poster">
+    <div class="wrap">
+      <h2>A dead product should cost you an afternoon, not a quarter.</h2>
+      <a class="btn btn-primary" href="#download">Download free</a>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      Store Validator builds storefronts. It doesn't host them, doesn't proxy
+      your AI calls, and doesn't process your customers' payments.
+    </div>
+  </footer>
+</Layout>

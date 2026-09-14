@@ -1,0 +1,293 @@
+/*
+ * Landing-page layout only. Every colour, font, space and radius comes from
+ * the Modernist tokens — nothing is hard-coded here.
+ */
+
+.wrap {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+
+/* The modular grid: equal-width cells with visible structure. */
+.cells {
+  display: grid;
+  gap: 0;
+  border-top: 2px solid var(--color-divider);
+}
+
+.cells-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cells-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cell {
+  padding: var(--space-6) var(--space-4);
+  border-bottom: 2px solid var(--color-divider);
+  border-right: 1px solid var(--color-divider);
+}
+
+.cell:last-child {
+  border-right: 0;
+}
+
+@media (max-width: 800px) {
+  .cells-3,
+  .cells-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cell {
+    border-right: 0;
+  }
+}
+
+.cell-index {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: var(--space-2);
+}
+
+/*
+ * The hero is the one place the accent runs as a field.
+ *
+ * Contrast is the constraint here, not taste: nothing clears 4.5:1 on
+ * #ec3013 — the ground reaches 3.76:1 and even pure white only 4.20:1. So
+ * everything on this field has to qualify as WCAG large text (>=24px, or
+ * >=18.66px bold), which passes at 3:1. That is why the lede is 24px and the
+ * kicker is uppercase at a bold weight rather than small grey type, and why
+ * no footnote-sized copy is allowed in here.
+ */
+.hero {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  padding: var(--space-8) 0 calc(var(--space-8) * 1.5);
+  border-bottom: 2px solid var(--color-text);
+}
+
+.hero-kicker {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-4);
+}
+
+.hero h1 {
+  font-size: clamp(40px, 7.5vw, 84px);
+  max-width: 19ch;
+  margin-bottom: var(--space-4);
+}
+
+.hero-lede {
+  /* 24px is the accessibility floor on this field, not a style choice. */
+  font-size: clamp(20px, 2.2vw, 24px);
+  font-weight: 600;
+  line-height: 1.4;
+  max-width: 50ch;
+  margin-bottom: var(--space-6);
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* Inverted: ground behind ink is the highest-contrast pair available here. */
+.hero .btn-primary {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 16px;
+  padding: var(--space-3) var(--space-6);
+}
+
+.hero .btn-primary:hover {
+  background: #ffffff;
+}
+
+.hero .btn-primary:active {
+  background: var(--color-neutral-200);
+}
+
+.hero-link {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 16px;
+  color: var(--color-bg);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.hero :focus-visible {
+  outline: 2px solid var(--color-bg);
+  outline-offset: 3px;
+}
+
+.section {
+  padding: var(--space-8) 0 0;
+}
+
+.section-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  border-bottom: 2px solid var(--color-divider);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.lead {
+  font-size: 17px;
+  max-width: 62ch;
+}
+
+.list-plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.list-plain li {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-divider);
+  font-size: 15px;
+}
+
+/* The one place the accent runs as a field: the closing poster statement. */
+/*
+ * The closing statement was the red field before the hero took that job.
+ * Modernist keeps the accent for one field per page, so this is ink on ground
+ * with a heavy rule instead — it still reads as a poster, without two blocks
+ * of red bookending the page and cancelling each other out.
+ */
+.poster {
+  background: var(--color-bg);
+  color: var(--color-text);
+  margin-top: var(--space-8);
+  padding: var(--space-8) 0;
+  border-top: 2px solid var(--color-text);
+  border-bottom: 2px solid var(--color-text);
+}
+
+.poster h2 {
+  font-size: clamp(32px, 6vw, 64px);
+  max-width: 24ch;
+  margin-bottom: var(--space-4);
+}
+
+.poster .btn-primary {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.poster .btn-primary:hover {
+  background: var(--color-accent-600);
+}
+
+.site-footer {
+  border-top: 2px solid var(--color-divider);
+  padding: var(--space-6) 0;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+
+.footnote {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  margin-top: var(--space-4);
+  max-width: 62ch;
+}
+
+.price-figure {
+  font-size: 25px;
+  margin: var(--space-2) 0;
+}
+
+.price-period {
+  font-size: 14px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+/* The licence key on the purchase-complete page: long, monospace, copyable. */
+.license-key {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  max-width: 720px;
+  margin: var(--space-3) 0;
+}
+
+.license-key code {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--color-neutral-200);
+  border-left: 2px solid var(--color-accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* Licence check + download */
+.signin-form {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+  flex-wrap: wrap;
+  max-width: 620px;
+}
+
+.signin-form .field {
+  flex: 1;
+  min-width: 280px;
+}
+
+.signin-result {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-divider);
+  font-size: 14px;
+  max-width: 620px;
+}
+
+.signin-result.is-ok {
+  border-left-color: var(--color-accent);
+  background: var(--color-accent-100);
+  color: var(--color-accent-800);
+}
+
+.signin-result.is-bad {
+  background: var(--color-neutral-100);
+  color: var(--color-neutral-800);
+}
+
+/*
+ * The shared `.nav` is a single flex row, which runs out of width on a phone —
+ * the last link was being clipped at the right edge. Scoped here rather than
+ * changed in @repo/design-system, since the desktop app's nav has different
+ * content and doesn't have the problem.
+ */
+@media (max-width: 720px) {
+  .nav {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    column-gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .nav-brand {
+    margin-right: 0;
+    width: 100%;
+  }
+}

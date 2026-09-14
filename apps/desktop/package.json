@@ -1,0 +1,51 @@
+{
+  "name": "@repo/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "productName": "Store Validator",
+  "description": "Turn an AliExpress product link into a deployable storefront.",
+  "author": "Store Validator",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs && vite build",
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/start.mjs",
+    "check-types": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run",
+    "lint": "eslint . --max-warnings 0",
+    "package": "npm run build && electron-builder --config electron-builder.yml",
+    "package:dir": "npm run build && electron-builder --dir --config electron-builder.yml",
+    "fix-sandbox": "bash scripts/fix-sandbox.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@repo/api": "*",
+    "@repo/db": "*",
+    "@repo/design-system": "*",
+    "@repo/shared": "*",
+    "@repo/store-generator": "*",
+    "better-sqlite3": "13.0.3",
+    "hono": "4.13.5"
+  },
+  "devDependencies": {
+    "@astrojs/netlify": "8.2.5",
+    "@astrojs/vercel": "11.0.10",
+    "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
+    "@types/node": "26.4.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "astro": "7.3.1",
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "eslint": "10.9.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.0"
+  }
+}

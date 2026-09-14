@@ -1,0 +1,168 @@
+import { randomBytes } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import {
+  BACKUP_KEY_BYTES,
+  BackupDecryptionError,
+  decryptBackup,
+  encryptBackup,
+  formatBackupKey,
+  generateBackupKey,
+  parseBackupKey,
+} from "./backup-crypto.js";
+
+describe("generateBackupKey", () => {
+  it("produces a 256-bit key", () => {
+    expect(generateBackupKey()).toHaveLength(BACKUP_KEY_BYTES);
+  });
+
+  it("does not repeat", () => {
+    const keys = new Set(
+      Array.from({ length: 50 }, () => generateBackupKey().toString("hex")),
+    );
+    expect(keys.size).toBe(50);
+  });
+});
+
+describe("recovery key encoding", () => {
+  it("round-trips exactly", () => {
+    for (let i = 0; i < 100; i++) {
+      const key = generateBackupKey();
+      expect(parseBackupKey(formatBackupKey(key))).toEqual(key);
+    }
+  });
+
+  // People copy this off a screen and type it on another machine.
+  it("avoids characters that are easy to confuse", () => {
+    const formatted = formatBackupKey(generateBackupKey());
+    expect(formatted).not.toMatch(/[01OIL]/);
+  });
+
+  it("is grouped and a stable length", () => {
+    const a = formatBackupKey(generateBackupKey());
+    expect(a).toContain("-");
+
+    // Comparing just two keys caught the variable-length bug only about half
+    // the time. 44% of 256-bit values need a 53rd base-30 digit, so a single
+    // pair is a coin flip — check enough keys that a regression can't hide.
+    const lengths = new Set(
+      Array.from({ length: 200 }, () => formatBackupKey(generateBackupKey()).length),
+    );
+    expect([...lengths]).toEqual([a.length]);
+  });
+
+  it("round-trips an all-zero key without losing length", () => {
+    const key = Buffer.alloc(BACKUP_KEY_BYTES, 0);
+    expect(parseBackupKey(formatBackupKey(key))).toEqual(key);
+  });
+
+  it("round-trips an all-ones key", () => {
+    const key = Buffer.alloc(BACKUP_KEY_BYTES, 0xff);
+    expect(parseBackupKey(formatBackupKey(key))).toEqual(key);
+  });
+
+  it("tolerates whatever spacing and case the user pastes", () => {
+    const key = generateBackupKey();
+    const formatted = formatBackupKey(key);
+
+    expect(parseBackupKey(formatted.toLowerCase())).toEqual(key);
+    expect(parseBackupKey(formatted.replace(/-/g, " "))).toEqual(key);
+    expect(parseBackupKey(formatted.replace(/-/g, ""))).toEqual(key);
+    expect(parseBackupKey(`  ${formatted}\n`)).toEqual(key);
+  });
+
+  it("refuses a key with characters outside the alphabet", () => {
+    expect(() => parseBackupKey("AAAA-AAAA-!!!!")).toThrow(BackupDecryptionError);
+  });
+
+  // The excluded characters are the confusable ones, so a mistyped `O` must be
+  // reported — not silently dropped into a different, valid-looking key.
+  it("names a confusable character rather than quietly ignoring it", () => {
+    const key = generateBackupKey();
+    const typo = `${formatBackupKey(key).slice(0, 6)}-O${formatBackupKey(key).slice(7)}`;
+
+    expect(() => parseBackupKey(typo)).toThrow(/0, O, 1, I or L/);
+  });
+
+  it("refuses an empty key", () => {
+    expect(() => parseBackupKey("   ")).toThrow(BackupDecryptionError);
+  });
+});
+
+describe("encryptBackup / decryptBackup", () => {
+  const key = generateBackupKey();
+  const plaintext = Buffer.from("SQLite format 3\0the rest of a database");
+
+  it("round-trips a backup", () => {
+    expect(decryptBackup(encryptBackup(plaintext, key), key)).toEqual(plaintext);
+  });
+
+  it("round-trips a large, binary body", () => {
+    const big = randomBytes(512 * 1024);
+    expect(decryptBackup(encryptBackup(big, key), key)).toEqual(big);
+  });
+
+  it("round-trips an empty body", () => {
+    const empty = Buffer.alloc(0);
+    expect(decryptBackup(encryptBackup(empty, key), key)).toEqual(empty);
+  });
+
+  // The entire justification for storing these on our infrastructure.
+  it("leaves no plaintext in the sealed file", () => {
+    const secret = Buffer.from("sk-or-v1-a-very-secret-value-indeed");
+    const sealed = encryptBackup(secret, key);
+
+    expect(sealed.includes(secret)).toBe(false);
+    expect(sealed.toString("latin1")).not.toContain("sk-or-v1");
+  });
+
+  it("never reuses a nonce, so identical backups differ", () => {
+    const a = encryptBackup(plaintext, key);
+    const b = encryptBackup(plaintext, key);
+    expect(a.equals(b)).toBe(false);
+  });
+
+  it("refuses the wrong key", () => {
+    const sealed = encryptBackup(plaintext, key);
+    expect(() => decryptBackup(sealed, generateBackupKey())).toThrow(
+      BackupDecryptionError,
+    );
+  });
+
+  // GCM authenticates: a flipped byte must fail, not decrypt to garbage.
+  it("detects tampering", () => {
+    const sealed = encryptBackup(plaintext, key);
+    const tampered = Buffer.from(sealed);
+    tampered[tampered.length - 1] ^= 0xff;
+
+    expect(() => decryptBackup(tampered, key)).toThrow(BackupDecryptionError);
+  });
+
+  it("detects a truncated file", () => {
+    const sealed = encryptBackup(plaintext, key);
+    expect(() => decryptBackup(sealed.subarray(0, 10), key)).toThrow(
+      /incomplete/i,
+    );
+  });
+
+  it("rejects a file that isn't one of ours", () => {
+    expect(() => decryptBackup(Buffer.alloc(64, 7), key)).toThrow(
+      /isn't a Store Validator backup/i,
+    );
+  });
+
+  it("rejects a key of the wrong size", () => {
+    expect(() => encryptBackup(plaintext, Buffer.alloc(16))).toThrow(
+      /must be 32 bytes/i,
+    );
+  });
+
+  // The point of the user-held key: restore has to work on a machine whose
+  // keychain has never seen this user before.
+  it("restores from nothing but the written-down recovery key", () => {
+    const sealed = encryptBackup(plaintext, key);
+    const written = formatBackupKey(key);
+
+    // ... on a different machine, months later ...
+    expect(decryptBackup(sealed, parseBackupKey(written))).toEqual(plaintext);
+  });
+});

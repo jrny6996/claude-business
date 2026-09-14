@@ -1,0 +1,48 @@
+---
+import Layout from "../../layouts/Layout.astro";
+
+/**
+ * Where Stripe returns a buyer.
+ *
+ * There is no key to collect any more — premium is attached to the account the
+ * subscription was bought with, and the app fetches it. So this page's only job
+ * is to confirm the purchase landed and say exactly what to do next.
+ *
+ * Deliberately no `session_id` lookup. It used to fetch a licence so the key
+ * was on screen immediately; with nothing to hand over, a round-trip to the
+ * service would only add a spinner and a way to fail.
+ */
+---
+
+<Layout
+  title="Purchase complete — Store Validator"
+  description="Your premium subscription is active."
+>
+  <main>
+    <section class="wrap section">
+      <div class="section-label">Purchase complete</div>
+
+      <h1>You're premium.</h1>
+      <p class="lead">
+        Your subscription is active. There's no key to copy and nothing to paste
+        — premium is tied to the email address you just paid with.
+      </p>
+
+      <h2 style="margin-top: var(--space-6)">Turn it on</h2>
+      <ol class="list-plain" style="max-width: 62ch">
+        <li>1. Open Store Validator and go to <strong>Settings → Subscription</strong>.</li>
+        <li>2. Enter the email address you subscribed with.</li>
+        <li>3. Enter the six-digit code we send you.</li>
+      </ol>
+
+      <p class="footnote">
+        That's it, on every machine you use. Renewals need nothing from you, and
+        cancelling keeps premium running to the end of the period you paid for.
+      </p>
+
+      <p style="margin-top: var(--space-6)">
+        <a class="btn btn-primary" href="/#download">Download the app</a>
+      </p>
+    </section>
+  </main>
+</Layout>

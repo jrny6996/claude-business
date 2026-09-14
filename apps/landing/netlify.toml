@@ -1,0 +1,28 @@
+# Netlify deploy for the marketing site *and* the hosted licensing/backup
+# service. One deployment, because the purchase flow spans both and they share
+# a domain.
+#
+# The site itself is entirely static. The only server-side code is
+# netlify/functions/api.mts, which mounts the Hono app in @repo/cloud at
+# /api/* — that function is the one part of this product that runs on our
+# infrastructure.
+#
+# The build runs from the repo root: this is a workspace package, and turbo
+# builds its dependencies (@repo/cloud, @repo/shared) first.
+[build]
+  base = "."
+  command = "npm run build --workspace @repo/cloud && npm run build --workspace @repo/landing"
+  publish = "apps/landing/dist"
+  functions = "apps/landing/netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "24"
+  # Without this npm skips devDependencies and nothing builds.
+  NODE_ENV = "development"
+
+# Nothing under /api is cacheable: it is licence material and someone's
+# encrypted database.
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-store"
