@@ -55,6 +55,18 @@ export function generateBackupKey(): Buffer {
  */
 const ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
 
+/**
+ * Digits needed to represent a 256-bit key in this alphabet:
+ * `ceil(256 / log2(30))` = 53.
+ *
+ * It must be 53, not 52. `30**52 < 2**256`, so about 44% of keys need that
+ * last digit — padding to 52 left the encoded key one character shorter for
+ * the other 56%, which made the displayed length wobble between 60 and 61
+ * characters depending on the key. A recovery key people copy by hand should
+ * be a fixed shape.
+ */
+const KEY_DIGITS = 53;
+
 export function formatBackupKey(key: Buffer): string {
   let value = BigInt(`0x${key.toString("hex")}`);
   const base = BigInt(ALPHABET.length);
@@ -66,7 +78,7 @@ export function formatBackupKey(key: Buffer): string {
   }
   // Leading zero bytes carry no digits; pad so the length is always the same
   // and a round-trip is exact.
-  while (chars.length < 52) chars.push(ALPHABET[0] as string);
+  while (chars.length < KEY_DIGITS) chars.push(ALPHABET[0] as string);
 
   const encoded = chars.reverse().join("");
   return (encoded.match(/.{1,6}/g) ?? []).join("-");

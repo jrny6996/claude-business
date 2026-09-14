@@ -156,7 +156,7 @@ real install.
   `packages/store-generator/src/dev-env.ts`; spawning in
   `apps/desktop/electron/dev-env.ts`.
 - **The symlink must be removed before installing.** npm would otherwise follow
-  it and install into the *shared* runtime, corrupting the preview for every
+  it and install into the _shared_ runtime, corrupting the preview for every
   other store. `rm` on a symlink removes the link, never the target — there is a
   test for exactly that.
 - `npm install`, never `npm ci`: a generated store ships no lockfile.
@@ -227,6 +227,19 @@ Re-pull with `DesignSync` rather than hand-editing `styles.css`. The house rules
 that are easiest to break: zero corner radius, flush-left everything (including
 labels in wide buttons), strong 2px dividers, accent used sparingly, photographs
 through `.grayscale`, and never hard-code a value the tokens already carry.
+
+**Where the accent runs as a field:** the landing page's **hero**, and nowhere
+else on that page. The system allows one such field; it used to be the closing
+statement, which is now ink-on-ground with 2px rules so the two don't compete.
+If a second red field is ever wanted, that is a deliberate departure — don't add
+one by accident.
+
+**Contrast on the accent is the binding constraint, not a preference.** Nothing
+clears 4.5:1 on `#ec3013`: the ground manages 3.76:1 and even pure white only
+4.20:1. So anything sitting on a red field must qualify as WCAG large text
+(>=24px, or >=18.66px bold) to pass at 3:1 — which is why the hero lede is 24px
+and its kicker is uppercase at the heading weight. Do not put footnote-sized
+copy on the accent; move it onto the ground instead.
 
 ## Tech stack
 
@@ -369,7 +382,7 @@ testable with no platform in the picture. Every marketing page stays prerendered
   show a real figure. With none configured the page says premium isn't on sale —
   never a guessed number.
 - **Sold as an annual subscription.** `invoice.paid` re-issues; the licence id is
-  derived from the Stripe subscription id so it is *stable across renewals* — the
+  derived from the Stripe subscription id so it is _stable across renewals_ — the
   storage namespace is derived from it, and a changing id would orphan a
   subscriber's backups once a year. Cancellation is deliberately a no-op: the
   outstanding licence already expires at period end, and revoking early would

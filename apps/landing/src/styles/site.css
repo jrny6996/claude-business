@@ -54,20 +54,82 @@
   margin-bottom: var(--space-2);
 }
 
+/*
+ * The hero is the one place the accent runs as a field.
+ *
+ * Contrast is the constraint here, not taste: nothing clears 4.5:1 on
+ * #ec3013 — the ground reaches 3.76:1 and even pure white only 4.20:1. So
+ * everything on this field has to qualify as WCAG large text (>=24px, or
+ * >=18.66px bold), which passes at 3:1. That is why the lede is 24px and the
+ * kicker is uppercase at a bold weight rather than small grey type, and why
+ * no footnote-sized copy is allowed in here.
+ */
 .hero {
-  padding: var(--space-8) 0;
+  background: var(--color-accent);
+  color: var(--color-bg);
+  padding: var(--space-8) 0 calc(var(--space-8) * 1.5);
+  border-bottom: 2px solid var(--color-text);
+}
+
+.hero-kicker {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-4);
 }
 
 .hero h1 {
-  font-size: clamp(38px, 7vw, 76px);
-  max-width: 20ch;
+  font-size: clamp(40px, 7.5vw, 84px);
+  max-width: 19ch;
   margin-bottom: var(--space-4);
 }
 
 .hero-lede {
-  font-size: 19px;
-  max-width: 58ch;
+  /* 24px is the accessibility floor on this field, not a style choice. */
+  font-size: clamp(20px, 2.2vw, 24px);
+  font-weight: 600;
+  line-height: 1.4;
+  max-width: 50ch;
   margin-bottom: var(--space-6);
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* Inverted: ground behind ink is the highest-contrast pair available here. */
+.hero .btn-primary {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 16px;
+  padding: var(--space-3) var(--space-6);
+}
+
+.hero .btn-primary:hover {
+  background: #ffffff;
+}
+
+.hero .btn-primary:active {
+  background: var(--color-neutral-200);
+}
+
+.hero-link {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: 16px;
+  color: var(--color-bg);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.hero :focus-visible {
+  outline: 2px solid var(--color-bg);
+  outline-offset: 3px;
 }
 
 .section {
@@ -102,11 +164,19 @@
 }
 
 /* The one place the accent runs as a field: the closing poster statement. */
+/*
+ * The closing statement was the red field before the hero took that job.
+ * Modernist keeps the accent for one field per page, so this is ink on ground
+ * with a heavy rule instead — it still reads as a poster, without two blocks
+ * of red bookending the page and cancelling each other out.
+ */
 .poster {
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background: var(--color-bg);
+  color: var(--color-text);
   margin-top: var(--space-8);
   padding: var(--space-8) 0;
+  border-top: 2px solid var(--color-text);
+  border-bottom: 2px solid var(--color-text);
 }
 
 .poster h2 {
@@ -116,12 +186,12 @@
 }
 
 .poster .btn-primary {
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--color-accent);
+  color: var(--color-bg);
 }
 
 .poster .btn-primary:hover {
-  background: var(--color-neutral-200);
+  background: var(--color-accent-600);
 }
 
 .site-footer {
@@ -200,4 +270,24 @@
 .signin-result.is-bad {
   background: var(--color-neutral-100);
   color: var(--color-neutral-800);
+}
+
+/*
+ * The shared `.nav` is a single flex row, which runs out of width on a phone —
+ * the last link was being clipped at the right edge. Scoped here rather than
+ * changed in @repo/design-system, since the desktop app's nav has different
+ * content and doesn't have the problem.
+ */
+@media (max-width: 720px) {
+  .nav {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    column-gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .nav-brand {
+    margin-right: 0;
+    width: 100%;
+  }
 }
