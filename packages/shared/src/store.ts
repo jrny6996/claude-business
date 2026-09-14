@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CustomCssSchema } from "./css.js";
 import { NormalizedProductSchema } from "./product.js";
 
 export const ThemeSchema = z.object({
@@ -11,6 +12,11 @@ export const ThemeSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/, "expected a hex colour like #2563eb")
     .default("#2563eb"),
   fontStack: z.enum(["system", "serif", "mono"]).default("system"),
+  /**
+   * The user's own CSS, appended after the preset's tokens so it can override
+   * them. Held as a validated tree rather than a string — see `css.ts` for why.
+   */
+  customCss: CustomCssSchema.prefault({}),
 });
 export type Theme = z.infer<typeof ThemeSchema>;
 
