@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { context } from "esbuild";
 import electronPath from "electron";
+import { electronLaunchArgs } from "./electron-sandbox.mjs";
 
 const DEV_SERVER_URL = "http://localhost:5273";
 
@@ -53,7 +54,9 @@ for (let attempt = 0; attempt < 60; attempt++) {
   }
 }
 
-const electron = spawn(electronPath, ["."], {
+// Checked before Vite work is wasted, and so the failure is explained rather
+// than surfacing as a SIGTRAP from the Electron binary.
+const electron = spawn(electronPath, await electronLaunchArgs(["."]), {
   stdio: "inherit",
   env: { ...process.env, DSV_DEV_SERVER_URL: DEV_SERVER_URL },
 });

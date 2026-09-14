@@ -10,12 +10,13 @@
   "scripts": {
     "build": "node scripts/build.mjs && vite build",
     "dev": "node scripts/dev.mjs",
-    "start": "electron .",
+    "start": "node scripts/start.mjs",
     "check-types": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run",
     "lint": "eslint . --max-warnings 0",
     "package": "npm run build && electron-builder --config electron-builder.yml",
-    "package:dir": "npm run build && electron-builder --dir --config electron-builder.yml"
+    "package:dir": "npm run build && electron-builder --dir --config electron-builder.yml",
+    "fix-sandbox": "bash scripts/fix-sandbox.sh"
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",

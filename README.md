@@ -20,16 +20,16 @@ providers directly.
 
 ## Layout
 
-| Path                       | What lives there                                                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/desktop`             | Electron app. `electron/` is the main process + sandboxed preload; `src/` is the React renderer.                                      |
-| `apps/landing`             | Astro marketing site, deployed separately.                                                                                            |
-| `packages/shared`          | Zod schemas and types shared by everything: product, store config, settings, `Result`/`AppError`.                                     |
-| `packages/db`              | SQLite: migrations, repositories, encrypted secret storage, premium backup. All DB access goes through here.                          |
+| Path                       | What lives there                                                                                                                                                                                         |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop`             | Electron app. `electron/` is the main process + sandboxed preload; `src/` is the React renderer.                                                                                                         |
+| `apps/landing`             | Astro marketing site, deployed separately.                                                                                                                                                               |
+| `packages/shared`          | Zod schemas and types shared by everything: product, store config, settings, `Result`/`AppError`.                                                                                                        |
+| `packages/db`              | SQLite: migrations, repositories, encrypted secret storage, premium backup. All DB access goes through here.                                                                                             |
 | `packages/store-generator` | `scrape/` (URL → normalized product), `generate/` (product → Astro project), `assets/` (download images into the store), `stripe/` (BYOK payment links), `ai/` (BYOK OpenRouter + Gemini), `dev-env.ts`. |
-| `packages/api`             | Hono routes + services. Runs in-process inside Electron.                                                                              |
-| `packages/cloud`           | Hono service **we** host: licence issuance and encrypted backup storage. Deployed with the landing page as one Netlify Function.       |
-| `packages/design-system`   | Modernist tokens/components for the app and landing page. Not used by generated stores.                                               |
+| `packages/api`             | Hono routes + services. Runs in-process inside Electron.                                                                                                                                                 |
+| `packages/cloud`           | Hono service **we** host: licence issuance and encrypted backup storage. Deployed with the landing page as one Netlify Function.                                                                         |
+| `packages/design-system`   | Modernist tokens/components for the app and landing page. Not used by generated stores.                                                                                                                  |
 
 ## Tiers
 
@@ -113,6 +113,42 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
 > devDependencies and nothing will build. Install with
 > `NODE_ENV=development npm install`.
 
+## Setting up a fresh machine
+
+Three things bite on a new clone, none of which are a broken repo:
+
+**1. npm defers install scripts.** npm 11.19+ won't run package install scripts
+without consent, so you get no esbuild binary and no compiled SQLite. The
+approvals are recorded in `package.json`; if `npm install-scripts ls` reports
+anything outstanding, approve it.
+
+**2. Electron's binary isn't fetched by that either.** Once per clone:
+
+```bash
+node node_modules/electron/install.js
+```
+
+**3. Linux: Chromium needs a way to sandbox itself.** Otherwise Electron aborts
+before any of our code runs, with a `chrome-sandbox` message that reads like a
+corrupt install. It isn't — it's machine setup. Either:
+
+```bash
+npm run fix-sandbox --workspace @repo/desktop      # setuid the helper (redo after reinstalling Electron)
+```
+
+or allow unprivileged user namespaces, which recent Ubuntu blocks by default
+and which survives Electron reinstalls:
+
+```bash
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+```
+
+`npm start` checks for both and tells you which to run rather than failing
+cryptically. There's an escape hatch, `DSV_DISABLE_SANDBOX=1`, but think before
+reaching for it: the app opens real AliExpress pages in a Chromium window to
+scrape them, so the renderer runs untrusted remote code and the sandbox is what
+contains it.
+
 ## How the cost boundary is enforced
 
 - **Stripe (BYOK).** Premium stores deployed to Vercel/Netlify ship their own
@@ -137,7 +173,7 @@ npm run package:dir --workspace @repo/desktop  # unpacked, no signing needed
   command; the host's own CLI performs the upload. We never serve storefront
   traffic.
 - **Backups (hosted, and sealed).** This is the one place we pay to store user
-  data, as a paid opt-in *alongside* the local-folder destination. It is only
+  data, as a paid opt-in _alongside_ the local-folder destination. It is only
   defensible because the database is encrypted on the user's machine with a key
   the service never receives: we hold ciphertext and a length. A breach of that
   bucket leaks backup sizes and timestamps. There is no server-side decrypt path,
