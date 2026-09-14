@@ -451,7 +451,11 @@ wrong one sends people hunting for a bug that isn't there.
 
 ## Working autonomously on this repo
 
-- Work on a branch per feature/task, open a PR rather than committing to main.
+- **Committing and pushing straight to main is allowed** (decided explicitly by
+  the product owner, 2026-09-14, replacing the branch-and-PR rule). Small,
+  reviewable commits matter more than where they land, and there is no second
+  reviewer to gate on. Branch and open a PR anyway when a change is large enough
+  to want reading as a whole, or when it touches the checkpoint category below.
 - Run the test suite and linter before considering a task done; don't wait for a human
   to ask for it.
 - For anything touching pricing logic, BYOK key handling, or what gets billed to our
