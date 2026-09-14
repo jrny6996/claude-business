@@ -97,7 +97,40 @@ appears in generated output.
 - A waitlist store renders **no cart and no cart nav link**. A store that cannot
   take an order must not imply that it can.
 
-### Licensing
+### Accounts and entitlement
+
+**Entitlement comes from an account, not a pasted key.** The reason is
+concrete: a licence was minted per billing period, so every renewal emailed the
+subscriber a new key to paste into Settings. An account plus a durable device
+token makes a renewal invisible.
+
+The flow, and why each part is where it is:
+
+- **Sign-in is a mailed six-digit code**, exchanged once for a device token.
+  No passwords, so there is still no password database to leak. The code is
+  single-use, attempt-limited, and expires in 15 minutes.
+- **The app fetches a signed entitlement** with that token and caches it.
+  Verified offline against the same Ed25519 public key as licences, so the app
+  never needs the service to be reachable in order to run.
+- **`refreshAfter` (1 day) and `expiresAt` (14 days) are deliberately far
+  apart.** A laptop offline for a fortnight keeps premium; a cancellation still
+  takes effect without us reaching the machine. Narrowing that gap punishes
+  offline users; widening it lets cancellations linger.
+- **The Stripe webhook is the only thing that changes subscription state**, and
+  it now records _every_ status — including the ones that end a subscription.
+  A cancellation that never landed would leave someone premium indefinitely.
+- **A cancelled subscriber stays premium until the period they paid for ends.**
+  `canceled` and `past_due` both still count while the period runs; revoking
+  early would be taking back something already bought.
+- **Backups stay reachable across the change.** They were namespaced by licence
+  id, so the account record stores that namespace — otherwise signing in with a
+  token would show an empty account to someone with years of backups.
+
+`packages/api/src/services/licensing.ts` prefers the account and only falls
+back to a licence key when there is no account, so a signed-in user's tier can
+never be raised by an old key lying around.
+
+### Licence keys (legacy)
 
 Entitlement comes from an **Ed25519-signed licence key**, verified offline
 against a public key embedded at build time (`DSV_LICENSE_PUBLIC_KEY`). This

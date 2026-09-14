@@ -8,6 +8,7 @@ export const SECRET_NAMES = [
   "gemini_api_key",
   "stripe_secret_key",
   "license_key",
+  "device_token",
   "backup_encryption_key",
   "deploy_token_vercel",
   "deploy_token_netlify",

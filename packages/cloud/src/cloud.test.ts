@@ -809,3 +809,207 @@ describe("backups on S3", () => {
     expect(status).toBe(502);
   });
 });
+
+/**
+ * Accounts and subscription-driven entitlement.
+ *
+ * The behaviour these pin down is the reason accounts exist at all: a
+ * subscriber should renew and notice nothing, where the licence flow emailed a
+ * new key to paste every period.
+ */
+describe("accounts", () => {
+  const signIn = async (email = "buyer@example.com") => {
+    await request("POST", "/api/account/signin", {
+      body: JSON.stringify({ email }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const code = /\b(\d{6})\b/.exec(mailer.sent.at(-1)?.subject ?? "")?.[1];
+    const verified = await request("POST", "/api/account/verify", {
+      body: JSON.stringify({ email, code }),
+      headers: { "Content-Type": "application/json" },
+    });
+    return { code, verified };
+  };
+
+  /** Drives the webhook the way Stripe would. */
+  const webhook = async (type: string, object: Record<string, unknown>) => {
+    const body = eventBody(type, object);
+    return request("POST", "/api/stripe/webhook", {
+      body,
+      headers: { "stripe-signature": stripeSignature(body) },
+    });
+  };
+
+  it("mails a sign-in code and exchanges it for a device token", async () => {
+    const { code, verified } = await signIn();
+
+    expect(code).toMatch(/^\d{6}$/);
+    expect(verified.status).toBe(200);
+    expect(verified.payload.value.deviceToken).toBeTruthy();
+    expect(verified.payload.value.entitlement).toContain(".");
+  });
+
+  it("never says whether an address is a customer", async () => {
+    const stranger = await request("POST", "/api/account/signin", {
+      body: JSON.stringify({ email: "nobody@example.com" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const customer = await request("POST", "/api/account/signin", {
+      body: JSON.stringify({ email: "buyer@example.com" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(stranger.status).toBe(customer.status);
+    expect(stranger.payload).toEqual(customer.payload);
+  });
+
+  it("refuses a wrong code, and the same code twice", async () => {
+    await request("POST", "/api/account/signin", {
+      body: JSON.stringify({ email: "buyer@example.com" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const code = /\b(\d{6})\b/.exec(mailer.sent.at(-1)?.subject ?? "")?.[1]!;
+
+    const wrong = await request("POST", "/api/account/verify", {
+      body: JSON.stringify({ email: "buyer@example.com", code: "000000" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(wrong.status).toBe(401);
+
+    const first = await request("POST", "/api/account/verify", {
+      body: JSON.stringify({ email: "buyer@example.com", code }),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(first.status).toBe(200);
+
+    // Single use: a code left in an inbox must not be a standing credential.
+    const replay = await request("POST", "/api/account/verify", {
+      body: JSON.stringify({ email: "buyer@example.com", code }),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(replay.status).toBe(401);
+  });
+
+  it("reports free before any subscription, premium after the webhook", async () => {
+    const { verified } = await signIn();
+    const token = verified.payload.value.deviceToken;
+
+    const before = await request("GET", "/api/account/entitlement", { headers: auth(token) });
+    expect(payloadOf(before.payload.value.entitlement).tier).toBe("free");
+
+    await webhook("checkout.session.completed", {
+      subscription: "sub_123",
+      customer_email: "buyer@example.com",
+    });
+
+    const after = await request("GET", "/api/account/entitlement", { headers: auth(token) });
+    const entitlement = payloadOf(after.payload.value.entitlement);
+    expect(entitlement.tier).toBe("premium");
+    expect(entitlement.status).toBe("active");
+  });
+
+  it("keeps the same device token working across a renewal", async () => {
+    await webhook("checkout.session.completed", {
+      subscription: "sub_123",
+      customer_email: "buyer@example.com",
+    });
+    const { verified } = await signIn();
+    const token = verified.payload.value.deviceToken;
+
+    // The renewal moves the period end. Nothing is emailed to paste, and the
+    // token the app already holds keeps working — the whole point of accounts.
+    stripe.subscription = {
+      ...stripe.subscription,
+      current_period_end: Math.floor(Date.parse("2028-09-08T12:00:00.000Z") / 1000),
+    };
+    await webhook("invoice.paid", { subscription: "sub_123" });
+
+    const after = await request("GET", "/api/account/entitlement", { headers: auth(token) });
+    expect(after.status).toBe(200);
+    const entitlement = payloadOf(after.payload.value.entitlement);
+    expect(entitlement.tier).toBe("premium");
+    expect(entitlement.periodEnd?.slice(0, 4)).toBe("2028");
+  });
+
+  it("keeps a cancelled subscriber premium until the period they paid for ends", async () => {
+    await webhook("checkout.session.completed", {
+      subscription: "sub_123",
+      customer_email: "buyer@example.com",
+    });
+    const { verified } = await signIn();
+    const token = verified.payload.value.deviceToken;
+
+    stripe.subscription = { ...stripe.subscription, status: "canceled" };
+    await webhook("customer.subscription.deleted", { id: "sub_123" });
+
+    const after = await request("GET", "/api/account/entitlement", { headers: auth(token) });
+    const entitlement = payloadOf(after.payload.value.entitlement);
+    expect(entitlement.status).toBe("canceled");
+    // Still premium: they paid through PERIOD_END, which is in the future.
+    expect(entitlement.tier).toBe("premium");
+  });
+
+  it("drops to free once a cancelled period has actually ended", async () => {
+    stripe.subscription = {
+      ...stripe.subscription,
+      status: "canceled",
+      current_period_end: Math.floor(Date.parse("2026-01-01T00:00:00.000Z") / 1000),
+    };
+    await webhook("customer.subscription.deleted", { id: "sub_123" });
+
+    const { verified } = await signIn();
+    const entitlement = payloadOf(verified.payload.value.entitlement);
+    expect(entitlement.tier).toBe("free");
+  });
+
+  it("signs a device out without affecting the account", async () => {
+    await webhook("checkout.session.completed", {
+      subscription: "sub_123",
+      customer_email: "buyer@example.com",
+    });
+    const first = (await signIn()).verified.payload.value.deviceToken;
+    const second = (await signIn()).verified.payload.value.deviceToken;
+
+    expect(
+      (await request("DELETE", "/api/account/device", { headers: auth(first) })).status,
+    ).toBe(200);
+    expect(
+      (await request("GET", "/api/account/entitlement", { headers: auth(first) })).status,
+    ).toBe(401);
+    // The other device is untouched.
+    expect(
+      (await request("GET", "/api/account/entitlement", { headers: auth(second) })).status,
+    ).toBe(200);
+  });
+
+  it("accepts a device token for cloud backup, reaching the same namespace as the key", async () => {
+    await webhook("checkout.session.completed", {
+      subscription: "sub_123",
+      customer_email: "buyer@example.com",
+    });
+
+    // Uploaded with a licence key, as a pre-accounts customer would have.
+    const upload = await request("POST", "/api/backup", {
+      body: new Uint8Array([1, 2, 3]),
+      headers: {
+        ...auth(premiumKey()),
+        [BACKUP_CREATED_AT_HEADER]: NOW.toISOString(),
+      },
+    });
+    expect(upload.status).toBe(200);
+
+    // Listed with a device token: same backups, not an empty account.
+    const token = (await signIn()).verified.payload.value.deviceToken;
+    const listed = await request("GET", "/api/backup", { headers: auth(token) });
+    expect(listed.status).toBe(200);
+    expect(listed.payload.value.backups).toHaveLength(1);
+  });
+});
+
+/** Reads a signed entitlement's payload without verifying it. */
+function payloadOf(token: string): any {
+  return JSON.parse(
+    Buffer.from(token.split(".")[0]!, "base64url").toString("utf8"),
+  );
+}

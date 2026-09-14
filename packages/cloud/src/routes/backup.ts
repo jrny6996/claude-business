@@ -30,7 +30,7 @@ export function backupRoutes(ctx: CloudContext): Hono {
 
   app.get("/", async (c) => {
     try {
-      const caller = authenticate(ctx, c.req.raw);
+      const caller = await authenticate(ctx, c.req.raw);
       return c.json({ ok: true, value: await listBackups(ctx, caller) });
     } catch (cause) {
       return respondWithError(c, cause);
@@ -39,7 +39,7 @@ export function backupRoutes(ctx: CloudContext): Hono {
 
   app.post("/", async (c) => {
     try {
-      const caller = authenticate(ctx, c.req.raw);
+      const caller = await authenticate(ctx, c.req.raw);
 
       // Checked before reading the body, so an oversized upload is refused
       // without buffering it into the function's memory first.
@@ -70,7 +70,7 @@ export function backupRoutes(ctx: CloudContext): Hono {
 
   app.get("/:id", async (c) => {
     try {
-      const caller = authenticate(ctx, c.req.raw);
+      const caller = await authenticate(ctx, c.req.raw);
       const { manifest, ciphertext } = await downloadBackup(
         ctx,
         caller,
@@ -95,7 +95,7 @@ export function backupRoutes(ctx: CloudContext): Hono {
 
   app.delete("/:id", async (c) => {
     try {
-      const caller = authenticate(ctx, c.req.raw);
+      const caller = await authenticate(ctx, c.req.raw);
       return c.json({
         ok: true,
         value: await deleteBackup(ctx, caller, c.req.param("id")),

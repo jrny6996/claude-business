@@ -108,6 +108,17 @@ export interface LicenseStatus {
   } | null;
 }
 
+/** What the app knows about the signed-in account's subscription. */
+export interface AccountState {
+  signedIn: boolean;
+  email: string | null;
+  tier: "free" | "premium";
+  status: string;
+  periodEnd: string | null;
+  /** Set when the cached entitlement is too old to be trusted. */
+  staleReason?: string;
+}
+
 export interface DeployInstructions {
   provider: string;
   projectDir: string;
@@ -165,6 +176,16 @@ export const api = {
   activateLicense: (key: string) =>
     call<LicenseStatus>("POST", "/api/license/activate", { key }),
   deactivateLicense: () => call<LicenseStatus>("DELETE", "/api/license"),
+
+  // Accounts. A device token replaces pasting a licence each billing period;
+  // the app fetches its own entitlement, so a renewal needs no action.
+  account: () => call<AccountState>("GET", "/api/account"),
+  requestSigninCode: (email: string) =>
+    call<{ message: string }>("POST", "/api/account/signin", { email }),
+  verifySigninCode: (email: string, code: string) =>
+    call<AccountState>("POST", "/api/account/verify", { email, code }),
+  refreshAccount: () => call<AccountState>("POST", "/api/account/refresh"),
+  signOutAccount: () => call<AccountState>("POST", "/api/account/signout"),
   runBackup: () => call<RunBackupResult>("POST", "/api/deploy/backup"),
 
   // Cloud backup. The recovery key has its own endpoint so it is only ever

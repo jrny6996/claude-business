@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { nowOf, type CloudContext } from "../context.js";
-import { issueLicense } from "../services/issuer.js";
+import { applySubscriptionState, type SubscriptionStatus } from "../services/accounts.js";
+import { accountNamespace, issueLicense, licenseIdForSubscription } from "../services/issuer.js";
 import { licenseEmail } from "../services/mail.js";
 import { verifyStripeSignature } from "../services/webhook-signature.js";
 
@@ -13,10 +14,15 @@ import { verifyStripeSignature } from "../services/webhook-signature.js";
  * - `invoice.paid` — a renewal. Re-issue with the new period end. Because the
  *   licence id is derived from the subscription id, the renewed key is the same
  *   identity with a later expiry, so the subscriber's cloud backups stay theirs.
- * - `customer.subscription.deleted` — a cancellation. Deliberately **nothing**.
- *   The outstanding licence already expires at period end, so a cancelled
- *   subscriber keeps what they paid for and then lapses on their own. Revoking
- *   early would be taking back a period they have already paid for.
+ * - `customer.subscription.deleted` / `.updated` — the account's recorded
+ *   status changes, but entitlement still runs to the period end. A subscriber
+ *   who cancels keeps what they paid for and lapses on their own; revoking
+ *   early would be taking back a period they have already bought.
+ *
+ * Every one of these also writes the subscription's state onto the account,
+ * which is what the desktop app actually reads. The licence mail is kept
+ * alongside it so customers who activated a key before accounts existed keep
+ * working — that path can go once none are in circulation.
  *
  * Anything else is acknowledged and ignored. Returning a non-2xx to Stripe for
  * an event we simply don't care about makes it retry for days.
@@ -79,17 +85,14 @@ async function handleEvent(ctx: CloudContext, event: StripeEvent): Promise<void>
       ? stringOrNull(object.subscription)
       : event.type === "invoice.paid"
         ? stringOrNull(object.subscription) ?? stringOrNull(object.parent)
-        : null;
+        : event.type === "customer.subscription.updated" ||
+            event.type === "customer.subscription.deleted"
+          ? stringOrNull(object.id)
+          : null;
 
   if (!subscriptionId) return;
 
   const subscription = await ctx.stripe.getSubscription(subscriptionId);
-
-  // A subscription that isn't paying doesn't get a key. `past_due` in
-  // particular arrives here on a failed renewal and must not extend anything.
-  if (subscription.status !== "active" && subscription.status !== "trialing") {
-    return;
-  }
 
   const email =
     stringOrNull(object.customer_email) ??
@@ -98,6 +101,35 @@ async function handleEvent(ctx: CloudContext, event: StripeEvent): Promise<void>
 
   if (!email) {
     throw new Error(`no email for subscription ${subscriptionId}`);
+  }
+
+  // Recorded first, and for every status — including the ones that end the
+  // subscription. This is the state the app reads, so a cancellation that never
+  // lands here would leave someone premium indefinitely.
+  await applySubscriptionState(ctx, {
+    email,
+    stripeCustomerId: subscription.customer,
+    subscriptionId,
+    status: normalizeStatus(subscription.status),
+    periodEnd: new Date(subscription.current_period_end * 1000).toISOString(),
+    backupNamespace: accountNamespace(licenseIdForSubscription(subscriptionId)),
+  });
+
+  // Only a purchase or a renewal mints a key. Gating on the event type rather
+  // than the subscription's status matters: a cancellation event can arrive
+  // while Stripe still reports the subscription active, and issuing there
+  // would email a fresh key to someone who just cancelled.
+  if (
+    event.type !== "checkout.session.completed" &&
+    event.type !== "invoice.paid"
+  ) {
+    return;
+  }
+
+  // A subscription that isn't paying doesn't get a key. `past_due` in
+  // particular arrives here on a failed renewal and must not extend anything.
+  if (subscription.status !== "active" && subscription.status !== "trialing") {
+    return;
   }
 
   const { key, payload } = issueLicense(
@@ -117,6 +149,22 @@ async function handleEvent(ctx: CloudContext, event: StripeEvent): Promise<void>
     // the buyer can retrieve the key from the success page or by recovery.
     // Retrying the whole event would re-issue a licence that already exists.
     console.error(`[cloud] couldn't email licence to ${email}`, cause);
+  }
+}
+
+/** Stripe has more states than entitlement cares about; fold the rest in. */
+function normalizeStatus(status: string): SubscriptionStatus {
+  switch (status) {
+    case "active":
+    case "trialing":
+    case "past_due":
+    case "canceled":
+      return status;
+    case "unpaid":
+    case "incomplete_expired":
+      return "canceled";
+    default:
+      return "none";
   }
 }
 

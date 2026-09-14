@@ -108,3 +108,26 @@ using this email address.
 `,
   };
 }
+
+/**
+ * The sign-in code.
+ *
+ * Deliberately terse and free of links: a code the reader retypes can't be
+ * turned into a phishing click, and this mail is triggered by anyone who types
+ * an address into the form, so it has to be safe to receive unexpectedly.
+ */
+export function signinCodeEmail(code: string, ttlMinutes: number): OutgoingMail {
+  return {
+    to: "",
+    subject: `${code} is your Store Validator sign-in code`,
+    text: `Your sign-in code is:
+
+${code}
+
+Enter it in the app to finish signing in. It expires in ${ttlMinutes} minutes.
+
+If you didn't ask to sign in, you can ignore this — the code is useless without
+access to the app, and nothing has changed on your account.
+`,
+  };
+}

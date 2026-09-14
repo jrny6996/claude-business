@@ -6,7 +6,13 @@ import {
   type AiProvider,
   type SettingsView,
 } from "@repo/shared";
-import { ApiError, api, desktop, type LicenseStatus } from "../bridge.js";
+import {
+  ApiError,
+  api,
+  desktop,
+  type AccountState,
+  type LicenseStatus,
+} from "../bridge.js";
 import { Banner } from "../components/Banner.js";
 import { Field } from "../components/Field.js";
 import { SecretField } from "../components/SecretField.js";
@@ -23,19 +29,32 @@ export function Settings() {
   const toast = useToast();
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [license, setLicense] = useState<LicenseStatus | null>(null);
-  const [licenseKey, setLicenseKey] = useState("");
+  const [account, setAccount] = useState<AccountState | null>(null);
+  const [signinEmail, setSigninEmail] = useState("");
+  const [signinCode, setSigninCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     try {
-      const [nextSettings, nextLicense] = await Promise.all([
+      const [nextSettings, nextLicense, nextAccount] = await Promise.all([
         api.getSettings(),
         api.license(),
+        api.account(),
       ]);
       setSettings(nextSettings);
       setLicense(nextLicense);
+      setAccount(nextAccount);
       setError(null);
+
+      // Quietly bring the subscription up to date on open. Failures are
+      // ignored on purpose: the cached entitlement is still valid offline, and
+      // an error banner every time the network is flaky would be noise.
+      void api
+        .refreshAccount()
+        .then(setAccount)
+        .catch(() => undefined);
     } catch (cause) {
       setError(cause as ApiError);
     }
@@ -59,20 +78,6 @@ export function Settings() {
     }
   };
 
-  const activate = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      setLicense(await api.activateLicense(licenseKey.trim()));
-      setLicenseKey("");
-      setSettings(await api.getSettings());
-      toast.show("Licence activated.");
-    } catch (cause) {
-      setError(cause as ApiError);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   if (!settings) {
     return error ? (
@@ -109,21 +114,30 @@ export function Settings() {
 
       <hr className="hr" />
 
-      <h3>Licence</h3>
-      {license?.license && !license.license.valid && (
-        <Banner title={license.license.reason ?? "That licence is no longer valid."} />
-      )}
-      {isPremium ? (
+      <h3>Subscription</h3>
+
+      {account?.staleReason && <Banner title={account.staleReason} />}
+
+      {account?.signedIn ? (
         <div className="stack-tight">
           <p className="text-muted">
-            Premium is active
-            {license?.license?.email ? ` for ${license.license.email}` : ""}
-            {license?.expiresAt
-              ? ` until ${new Date(license.expiresAt).toLocaleDateString()}`
-              : ""}
-            .
+            Signed in as {account.email}.{" "}
+            {account.tier === "premium"
+              ? `Premium is active${
+                  account.periodEnd
+                    ? ` ${
+                        account.status === "canceled" ? "until" : "and renews"
+                      } ${new Date(account.periodEnd).toLocaleDateString()}`
+                    : ""
+                }.`
+              : "No active subscription on this account."}
           </p>
-          <div className="mono">{license?.license?.hint}</div>
+          {account.status === "past_due" && (
+            <Banner title="Your last payment didn't go through">
+              Update your card with Stripe to keep premium. Nothing is switched
+              off yet.
+            </Banner>
+          )}
           <div className="inline-actions">
             <button
               type="button"
@@ -131,12 +145,25 @@ export function Settings() {
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  setLicense(await api.deactivateLicense());
+                  setAccount(await api.refreshAccount());
                   return api.getSettings();
-                }, "Licence removed.")
+                }, "Subscription checked.")
               }
             >
-              Remove licence
+              Check subscription
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  setAccount(await api.signOutAccount());
+                  return api.getSettings();
+                }, "Signed out on this device.")
+              }
+            >
+              Sign out
             </button>
           </div>
         </div>
@@ -147,30 +174,87 @@ export function Settings() {
             images and waitlist capture. Premium adds Stripe checkout on your
             generated stores and automated backups.
           </p>
+
           <Field
-            label="Licence key"
-            htmlFor="license-key"
-            hint="From your purchase receipt. Verified on this machine — it works offline."
+            label="Email"
+            htmlFor="signin-email"
+            hint="The address you subscribed with. We'll send a code — there's no password."
           >
             <input
-              id="license-key"
+              id="signin-email"
               className="input"
-              value={licenseKey}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="eyJ2IjoxLCJlbWFpbCI6…"
-              onChange={(event) => setLicenseKey(event.target.value)}
+              type="email"
+              autoComplete="email"
+              value={signinEmail}
+              onChange={(event) => setSigninEmail(event.target.value)}
             />
           </Field>
-          <div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || licenseKey.trim().length === 0}
-              onClick={() => void activate()}
+
+          {codeSent && (
+            <Field
+              label="Sign-in code"
+              htmlFor="signin-code"
+              hint="Six digits, from the email we just sent."
             >
-              Activate
-            </button>
+              <input
+                id="signin-code"
+                className="input"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={signinCode}
+                onChange={(event) => setSigninCode(event.target.value)}
+              />
+            </Field>
+          )}
+
+          <div className="inline-actions">
+            {!codeSent ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy || signinEmail.trim().length === 0}
+                onClick={() =>
+                  void run(async () => {
+                    await api.requestSigninCode(signinEmail.trim());
+                    setCodeSent(true);
+                    return api.getSettings();
+                  }, "Code sent. Check your email.")
+                }
+              >
+                Send code
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy || signinCode.trim().length === 0}
+                  onClick={() =>
+                    void run(async () => {
+                      setAccount(
+                        await api.verifySigninCode(
+                          signinEmail.trim(),
+                          signinCode.trim(),
+                        ),
+                      );
+                      setSigninCode("");
+                      setCodeSent(false);
+                      return api.getSettings();
+                    }, "Signed in.")
+                  }
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy}
+                  onClick={() => setCodeSent(false)}
+                >
+                  Use a different email
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -1,5 +1,8 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import {
+  checkEntitlementFreshness,
+  decodeEntitlement,
+  type EntitlementCheck,
   checkLicenseValidity,
   decodeLicenseKey,
   encodeLicensePayload,
@@ -108,4 +111,44 @@ export function generateLicenseKeyPair(): {
       .export({ type: "pkcs8", format: "pem" })
       .toString(),
   };
+}
+
+/**
+ * Verifies a signed entitlement fetched from the hosted service.
+ *
+ * Same key as licences, so one public key covers both and a machine that still
+ * holds an old licence keeps working while accounts roll out. Verified locally
+ * for the same reason licences were: the app must not need our service to be
+ * reachable in order to run.
+ */
+export function verifyEntitlementToken(
+  token: string,
+  { publicKeyPem = LICENSE_PUBLIC_KEY_PEM, now = new Date() }: VerifyOptions = {},
+): EntitlementCheck {
+  const decoded = decodeEntitlement(token);
+  if (!decoded) {
+    return { valid: false, reason: "That subscription record couldn't be read." };
+  }
+
+  const signatureOk = (() => {
+    try {
+      return verify(
+        null,
+        decoded.signedBytes,
+        createPublicKey(publicKeyPem),
+        decoded.signature,
+      );
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!signatureOk) {
+    return {
+      valid: false,
+      reason: "That subscription record isn't genuine. Sign in again.",
+    };
+  }
+
+  return checkEntitlementFreshness(decoded.payload, now);
 }

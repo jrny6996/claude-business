@@ -1230,3 +1230,259 @@ async function goPremiumWithBackupDir(): Promise<void> {
     directory: join(tempRoot, "backups"),
   });
 }
+
+/**
+ * Accounts, from the app's side.
+ *
+ * The behaviour worth pinning: a renewal needs no action from the subscriber,
+ * and the app keeps working offline while a cancellation still takes effect.
+ */
+describe("account", () => {
+  const CLOUD = "https://cloud.test";
+
+  /** Signs an entitlement the way the hosted service would. */
+  const entitlement = (
+    over: Partial<{
+      tier: "free" | "premium";
+      status: string;
+      periodEnd: string | null;
+      refreshAfter: string;
+      expiresAt: string;
+    }> = {},
+  ) => {
+    const payload = {
+      v: 1,
+      accountId: "acct_test",
+      email: "buyer@example.com",
+      tier: over.tier ?? "premium",
+      status: over.status ?? "active",
+      periodEnd: over.periodEnd === undefined ? "2027-01-01T00:00:00.000Z" : over.periodEnd,
+      refreshAfter: over.refreshAfter ?? "2026-09-05T12:00:00.000Z",
+      expiresAt: over.expiresAt ?? "2026-09-18T12:00:00.000Z",
+      issuedAt: "2026-09-04T12:00:00.000Z",
+    };
+    const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const { sign, createPrivateKey } = require("node:crypto");
+    const signature = sign(
+      null,
+      new TextEncoder().encode(encoded),
+      createPrivateKey(issuer.privateKeyPem),
+    );
+    return `${encoded}.${signature.toString("base64url")}`;
+  };
+
+  /** Stands in for the hosted service. */
+  const cloud = (handlers: Record<string, () => { status?: number; body: unknown }>) => {
+    const calls: string[] = [];
+    harness.ctx.cloudBaseUrl = CLOUD;
+    harness.ctx.fetchImpl = (async (url: string, init: Record<string, unknown> = {}) => {
+      const path = String(url).replace(CLOUD, "");
+      calls.push(`${String(init.method ?? "GET")} ${path}`);
+      const handler = handlers[path];
+      const result = handler ? handler() : { status: 404, body: { ok: false } };
+      return {
+        ok: (result.status ?? 200) < 400,
+        status: result.status ?? 200,
+        url: String(url),
+        headers: { get: () => null, getSetCookie: () => [] as string[] },
+        text: async () => JSON.stringify(result.body),
+      };
+    }) as never;
+    return calls;
+  };
+
+  it("signs in with a mailed code and becomes premium", async () => {
+    cloud({
+      "/api/account/signin": () => ({ body: { ok: true, value: { message: "sent" } } }),
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: entitlement() } },
+      }),
+    });
+
+    await harness.request("POST", "/api/account/signin", { email: "buyer@example.com" });
+    const verified = await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    expect(verified.status).toBe(200);
+    expect(verified.payload.value).toMatchObject({
+      signedIn: true,
+      tier: "premium",
+      status: "active",
+    });
+
+    // And the rest of the app agrees, so premium features unlock.
+    const license = await harness.request("GET", "/api/license");
+    expect((license.payload.value as { tier: string }).tier).toBe("premium");
+  });
+
+  it("never stores the device token where it can be read back", async () => {
+    cloud({
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_secret_value", entitlement: entitlement() } },
+      }),
+    });
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    const state = await harness.request("GET", "/api/account");
+    expect(JSON.stringify(state.payload)).not.toContain("dev_secret_value");
+  });
+
+  it("refuses an entitlement that isn't signed by us", async () => {
+    const forged = generateLicenseKeyPair();
+    const payload = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        accountId: "acct_x",
+        email: "attacker@example.com",
+        tier: "premium",
+        status: "active",
+        periodEnd: "2030-01-01T00:00:00.000Z",
+        refreshAfter: "2030-01-01T00:00:00.000Z",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+        issuedAt: "2026-09-04T00:00:00.000Z",
+      }),
+    ).toString("base64url");
+    const { sign, createPrivateKey } = await import("node:crypto");
+    const bad = `${payload}.${sign(null, new TextEncoder().encode(payload), createPrivateKey(forged.privateKeyPem)).toString("base64url")}`;
+
+    cloud({
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: bad } },
+      }),
+    });
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    const state = await harness.request("GET", "/api/account");
+    expect((state.payload.value as { tier: string }).tier).toBe("free");
+  });
+
+  it("keeps working offline until the entitlement expires", async () => {
+    cloud({
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: entitlement() } },
+      }),
+    });
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    // The service is now unreachable.
+    harness.ctx.fetchImpl = (async () => {
+      throw new Error("offline");
+    }) as never;
+
+    // A refresh the user explicitly asked for reports that it couldn't reach
+    // the service, rather than pretending it checked.
+    const refreshed = await harness.request("POST", "/api/account/refresh");
+    expect(refreshed.status).toBe(502);
+
+    // But entitlement is unchanged: premium survives being offline, which is
+    // the whole reason the entitlement is cached and signed.
+    const state = await harness.request("GET", "/api/account");
+    expect((state.payload.value as { tier: string }).tier).toBe("premium");
+  });
+
+  it("drops to free once a cached entitlement goes stale", async () => {
+    cloud({
+      "/api/account/verify": () => ({
+        body: {
+          ok: true,
+          value: {
+            deviceToken: "dev_abc",
+            entitlement: entitlement({ expiresAt: "2026-09-10T00:00:00.000Z" }),
+          },
+        },
+      }),
+    });
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    // Past the entitlement's expiry, with no way to refresh.
+    harness.ctx.now = () => new Date("2026-10-01T00:00:00.000Z");
+    harness.ctx.fetchImpl = (async () => {
+      throw new Error("offline");
+    }) as never;
+
+    const state = await harness.request("GET", "/api/account");
+    const value = state.payload.value as { tier: string; staleReason?: string };
+    expect(value.tier).toBe("free");
+    expect(value.staleReason).toMatch(/out of date/i);
+  });
+
+  it("follows a renewal without the user doing anything", async () => {
+    let current = entitlement({ periodEnd: "2027-01-01T00:00:00.000Z" });
+    cloud({
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: current } },
+      }),
+      "/api/account/entitlement": () => ({ body: { ok: true, value: { entitlement: current } } }),
+    });
+
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    // The subscription renews server-side. No new key, no paste.
+    current = entitlement({ periodEnd: "2028-01-01T00:00:00.000Z" });
+    const refreshed = await harness.request("POST", "/api/account/refresh");
+
+    expect((refreshed.payload.value as { periodEnd: string }).periodEnd).toBe(
+      "2028-01-01T00:00:00.000Z",
+    );
+    expect((refreshed.payload.value as { tier: string }).tier).toBe("premium");
+  });
+
+  it("signs out when the service says the device is gone", async () => {
+    cloud({
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: entitlement() } },
+      }),
+      "/api/account/entitlement": () => ({
+        status: 401,
+        body: { ok: false, error: { message: "This device is signed out." } },
+      }),
+    });
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    const refreshed = await harness.request("POST", "/api/account/refresh");
+    expect(refreshed.status).toBe(401);
+
+    const state = await harness.request("GET", "/api/account");
+    expect((state.payload.value as { signedIn: boolean }).signedIn).toBe(false);
+  });
+
+  it("signs out locally even if the service can't be told", async () => {
+    cloud({
+      "/api/account/verify": () => ({
+        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: entitlement() } },
+      }),
+    });
+    await harness.request("POST", "/api/account/verify", {
+      email: "buyer@example.com",
+      code: "123456",
+    });
+
+    harness.ctx.fetchImpl = (async () => {
+      throw new Error("offline");
+    }) as never;
+
+    const out = await harness.request("POST", "/api/account/signout");
+    expect((out.payload.value as { signedIn: boolean }).signedIn).toBe(false);
+    expect((out.payload.value as { tier: string }).tier).toBe("free");
+  });
+});

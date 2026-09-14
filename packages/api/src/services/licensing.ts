@@ -8,12 +8,15 @@ import {
 import { LOCAL_USER_ID } from "@repo/db";
 import { nowOf, type AppContext } from "../context.js";
 import { verifyLicenseKey } from "./license-keys.js";
+import { getAccountState } from "./account.js";
 
 /**
  * Licensing.
  *
- * Entitlement comes from a **signed licence key**, verified offline against an
- * embedded public key. This replaced an earlier version that simply believed
+ * Entitlement comes from the **signed entitlement** the app fetches for its
+ * account, falling back to a **signed licence key** for machines activated
+ * before accounts existed. Both are verified offline against an embedded
+ * public key. This replaced an earlier version that simply believed
  * whatever tier the client asked for — anything deciding what a user has paid
  * for has to be verifiable, and nothing that ships to a user can mint a licence.
  *
@@ -40,6 +43,26 @@ export interface LicenseStatus {
 
 export function getLicenseStatus(ctx: AppContext): LicenseStatus {
   const now = nowOf(ctx);
+
+  // The account is the modern source of truth. A licence key is only consulted
+  // when there is no account, so a signed-in user's tier can never be raised by
+  // an old key they still happen to have lying around.
+  const account = getAccountState(ctx);
+  if (account.signedIn) {
+    return {
+      profile: syncProfile(ctx, account.tier, account.periodEnd, account.email),
+      tier: account.tier,
+      expiresAt: account.periodEnd,
+      license: {
+        hint: account.email ?? "",
+        email: account.email ?? "",
+        id: "account",
+        valid: account.tier === "premium",
+        ...(account.staleReason ? { reason: account.staleReason } : {}),
+      },
+    };
+  }
+
   const key = ctx.data.settings.readSecret("license_key");
 
   if (!key) {

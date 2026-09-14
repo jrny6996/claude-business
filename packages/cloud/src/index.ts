@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { CloudContext } from "./context.js";
+import { accountRoutes } from "./routes/account.js";
 import { backupRoutes } from "./routes/backup.js";
 import { checkoutRoutes } from "./routes/checkout.js";
 import { respondWithError } from "./routes/errors.js";
@@ -14,6 +15,8 @@ export * from "./services/stripe.js";
 export * from "./services/mail.js";
 export * from "./services/issuer.js";
 export * from "./services/auth.js";
+export * from "./services/accounts.js";
+export * from "./services/entitlement.js";
 export * from "./services/backups.js";
 export * from "./services/webhook-signature.js";
 export { statusFor } from "./routes/errors.js";
@@ -41,6 +44,7 @@ export { statusFor } from "./routes/errors.js";
 export function createCloudApp(ctx: CloudContext): Hono {
   const app = new Hono();
 
+  app.route("/api/account", accountRoutes(ctx));
   app.route("/api/checkout", checkoutRoutes(ctx));
   app.route("/api/license", licenseRoutes(ctx));
   app.route("/api/backup", backupRoutes(ctx));

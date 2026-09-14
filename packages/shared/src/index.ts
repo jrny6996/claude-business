@@ -4,6 +4,7 @@ export * from "./result.js";
 export * from "./user.js";
 export * from "./pricing.js";
 export * from "./license.js";
+export * from "./entitlement.js";
 export * from "./ai.js";
 export * from "./dev-env.js";
 export * from "./cloud.js";
