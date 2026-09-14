@@ -84,38 +84,6 @@ export class ResendMailer implements Mailer {
   }
 }
 
-export function licenseEmail(key: string, expiresAt: string | null): OutgoingMail {
-  return {
-    to: "",
-    subject: "Your Store Validator licence key",
-    text: `Thanks for subscribing to Store Validator premium.
-
-Here is your licence key:
-
-${key}
-
-Activate it in the app under Settings → Licence. It's verified on your own
-machine and works offline — there's no account and no password to remember.
-
-${
-  expiresAt
-    ? `This key covers your subscription through ${expiresAt.slice(0, 10)}. A new one is issued automatically each time your subscription renews, and emailed to this address.`
-    : "This key has no expiry."
-}
-
-Lost it? Request it again at any time from the licence section of the site,
-using this email address.
-`,
-  };
-}
-
-/**
- * The sign-in code.
- *
- * Deliberately terse and free of links: a code the reader retypes can't be
- * turned into a phishing click, and this mail is triggered by anyone who types
- * an address into the form, so it has to be safe to receive unexpectedly.
- */
 export function signinCodeEmail(code: string, ttlMinutes: number): OutgoingMail {
   return {
     to: "",

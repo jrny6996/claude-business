@@ -44,14 +44,6 @@ export interface CloudContext {
   blobs: BlobStore;
   stripe: StripeApi;
   mailer: Mailer;
-  /**
-   * PEM private key licences are signed with. **The only privileged secret in
-   * the system.** It exists in this one process and nowhere else — not in the
-   * repo, not in the desktop app, not on any user's machine.
-   */
-  licensePrivateKeyPem: string;
-  /** Public half, used to authenticate incoming licence-bearing requests. */
-  licensePublicKeyPem: string;
   /** Shared secret Stripe signs webhooks with. */
   stripeWebhookSecret: string;
   /** Injected so tests are deterministic. */

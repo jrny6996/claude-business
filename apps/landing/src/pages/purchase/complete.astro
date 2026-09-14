@@ -4,180 +4,45 @@ import Layout from "../../layouts/Layout.astro";
 /**
  * Where Stripe returns a buyer.
  *
- * A static page that fetches the licence for its `session_id` on load, so the
- * key is on screen within a moment of landing rather than after an inbox
- * round-trip. The same key is emailed regardless — this is about the purchase
- * feeling finished.
+ * There is no key to collect any more — premium is attached to the account the
+ * subscription was bought with, and the app fetches it. So this page's only job
+ * is to confirm the purchase landed and say exactly what to do next.
  *
- * Static rather than server-rendered because the whole marketing site is, and
- * one dynamic page would mean an adapter and a running server for a page that
- * only needs one fetch.
+ * Deliberately no `session_id` lookup. It used to fetch a licence so the key
+ * was on screen immediately; with nothing to hand over, a round-trip to the
+ * service would only add a spinner and a way to fail.
  */
 ---
 
 <Layout
-  title="Your licence — Store Validator"
-  description="Your premium licence key."
+  title="Purchase complete — Store Validator"
+  description="Your premium subscription is active."
 >
   <main>
     <section class="wrap section">
       <div class="section-label">Purchase complete</div>
 
-      <h1 data-title>Finishing your purchase…</h1>
-      <p class="lead" data-lead>
-        Checking with Stripe. This usually takes a second or two.
-      </p>
-
-      <div class="license-key" data-key-holder hidden>
-        <code data-key></code>
-        <button class="btn btn-secondary" type="button" data-copy>Copy</button>
-      </div>
-
-      <p class="footnote" data-key-note hidden></p>
-    </section>
-
-    <section class="wrap section">
-      <div class="section-label">Lost your key?</div>
+      <h1>You're premium.</h1>
       <p class="lead">
-        Enter the email address you subscribed with and we'll send it again.
+        Your subscription is active. There's no key to copy and nothing to paste
+        — premium is tied to the email address you just paid with.
       </p>
 
-      <form class="signin-form" data-recover>
-        <div class="field">
-          <label for="recover-email">Email address</label>
-          <input
-            id="recover-email"
-            class="input"
-            name="email"
-            type="email"
-            required
-            autocomplete="email"
-          />
-        </div>
-        <button class="btn btn-primary" type="submit">Send my key</button>
-      </form>
+      <h2 style="margin-top: var(--space-6)">Turn it on</h2>
+      <ol class="list-plain" style="max-width: 62ch">
+        <li>1. Open Store Validator and go to <strong>Settings → Subscription</strong>.</li>
+        <li>2. Enter the email address you subscribed with.</li>
+        <li>3. Enter the six-digit code we send you.</li>
+      </ol>
 
-      <div class="signin-result" data-recover-result hidden></div>
+      <p class="footnote">
+        That's it, on every machine you use. Renewals need nothing from you, and
+        cancelling keeps premium running to the end of the period you paid for.
+      </p>
+
+      <p style="margin-top: var(--space-6)">
+        <a class="btn btn-primary" href="/#download">Download the app</a>
+      </p>
     </section>
   </main>
 </Layout>
-
-<script>
-  const title = document.querySelector("[data-title]");
-  const lead = document.querySelector("[data-lead]");
-  const holder = document.querySelector("[data-key-holder]");
-  const keyEl = document.querySelector("[data-key]");
-  const note = document.querySelector("[data-key-note]");
-  const copyButton = document.querySelector("[data-copy]");
-
-  const setText = (el, text) => {
-    if (el instanceof HTMLElement) el.textContent = text;
-  };
-
-  const showKey = (value) => {
-    if (holder instanceof HTMLElement) holder.hidden = false;
-    setText(keyEl, value.key);
-    if (keyEl instanceof HTMLElement) keyEl.dataset.value = value.key;
-
-    setText(title, "Here's your licence key");
-    setText(
-      lead,
-      "Activate it in the app under Settings → Licence. It's verified on your own machine and works offline — there's no account and no password.",
-    );
-
-    if (note instanceof HTMLElement) {
-      note.hidden = false;
-      note.textContent = `Also emailed to ${value.email}.${
-        value.expiresAt
-          ? ` Covers your subscription through ${String(value.expiresAt).slice(0, 10)}; a new key is issued and emailed automatically each renewal.`
-          : ""
-      }`;
-    }
-  };
-
-  const load = async () => {
-    const sessionId = new URLSearchParams(window.location.search).get("session_id");
-
-    if (!sessionId) {
-      setText(title, "We couldn't find that purchase");
-      setText(
-        lead,
-        "If you've just paid, your licence key is on its way by email. You can also request it again below.",
-      );
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `/api/license/complete?session_id=${encodeURIComponent(sessionId)}`,
-      );
-      const payload = await response.json();
-
-      if (payload?.ok && payload.value?.status === "ready" && payload.value.key) {
-        showKey(payload.value);
-        return;
-      }
-
-      // Stripe hasn't finished creating the subscription yet. Worth saying so
-      // plainly rather than showing an error for something that isn't one.
-      setText(title, "Almost there");
-      setText(
-        lead,
-        "Stripe is still finishing up. Refresh this page in a few seconds — your key is also being emailed to you.",
-      );
-    } catch {
-      setText(title, "We couldn't reach the licence service");
-      setText(
-        lead,
-        "Your key is on its way by email. You can also request it again below.",
-      );
-    }
-  };
-
-  copyButton?.addEventListener("click", async () => {
-    const value = keyEl instanceof HTMLElement ? keyEl.dataset.value : null;
-    if (!value || !(copyButton instanceof HTMLElement)) return;
-
-    try {
-      await navigator.clipboard.writeText(value);
-      copyButton.textContent = "Copied";
-      setTimeout(() => (copyButton.textContent = "Copy"), 1500);
-    } catch {
-      // Clipboard can be refused; the key is selectable either way.
-    }
-  });
-
-  const form = document.querySelector("[data-recover]");
-  const result = document.querySelector("[data-recover-result]");
-
-  form?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!(form instanceof HTMLFormElement) || !(result instanceof HTMLElement)) return;
-
-    const email = String(new FormData(form).get("email") ?? "").trim();
-    result.hidden = false;
-    result.className = "signin-result";
-    result.textContent = "Sending…";
-
-    try {
-      const response = await fetch("/api/license/recover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const payload = await response.json();
-
-      result.className = "signin-result is-ok";
-      // Deliberately the same answer whether or not that address bought
-      // anything — see the route's comment.
-      result.textContent =
-        payload?.value?.message ??
-        "If that address has an active subscription, its licence key is on its way.";
-    } catch {
-      result.className = "signin-result is-bad";
-      result.textContent = "Couldn't reach the server. Try again in a moment.";
-    }
-  });
-
-  void load();
-</script>

@@ -4,16 +4,13 @@ import { accountRoutes } from "./routes/account.js";
 import { deployRoutes } from "./routes/deploy.js";
 import { respondWithError } from "./routes/errors.js";
 import { healthRoutes } from "./routes/health.js";
-import { licensingRoutes } from "./routes/licensing.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { storeRoutes } from "./routes/stores.js";
 
 export * from "./context.js";
 export * from "./services/settings.js";
 export * from "./services/stores.js";
-export * from "./services/licensing.js";
 export * from "./services/account.js";
-export * from "./services/license-keys.js";
 export * from "./services/deploy.js";
 export * from "./services/backup.js";
 export * from "./services/cloud-backup.js";
@@ -31,7 +28,6 @@ export function createApp(ctx: AppContext): Hono {
   app.route("/api/health", healthRoutes(ctx));
   app.route("/api/settings", settingsRoutes(ctx));
   app.route("/api/stores", storeRoutes(ctx));
-  app.route("/api/license", licensingRoutes(ctx));
   app.route("/api/account", accountRoutes(ctx));
   app.route("/api/deploy", deployRoutes(ctx));
 

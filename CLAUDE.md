@@ -97,113 +97,52 @@ appears in generated output.
 - A waitlist store renders **no cart and no cart nav link**. A store that cannot
   take an order must not imply that it can.
 
-### Accounts and entitlement
+### Accounts, and where premium is actually enforced
 
-**Entitlement comes from an account, not a pasted key.** The reason is
-concrete: a licence was minted per billing period, so every renewal emailed the
-subscriber a new key to paste into Settings. An account plus a durable device
-token makes a renewal invisible.
+**Premium is an account, gated server-side. There is no licensing.**
 
-The flow, and why each part is where it is:
+A signed-licence subsystem used to exist — keys minted per billing period,
+verified offline against an embedded Ed25519 public key, with an issuer, a
+keypair ceremony and a build-time `DSV_LICENSE_PUBLIC_KEY`. It was deleted,
+about 800 lines of it, because it protected nothing. Every feature it gated
+runs on the user's own machine, so anyone determined enough to forge an
+entitlement could just patch the app. Signing made casual tampering slightly
+harder and cost a great deal of machinery.
 
-- **Sign-in is a mailed six-digit code**, exchanged once for a device token.
-  No passwords, so there is still no password database to leak. The code is
-  single-use, attempt-limited, and expires in 15 minutes.
-- **The app fetches a signed entitlement** with that token and caches it.
-  Verified offline against the same Ed25519 public key as licences, so the app
-  never needs the service to be reachable in order to run.
-- **`refreshAfter` (1 day) and `expiresAt` (14 days) are deliberately far
-  apart.** A laptop offline for a fortnight keeps premium; a cancellation still
-  takes effect without us reaching the machine. Narrowing that gap punishes
-  offline users; widening it lets cancellations linger.
+What replaced it:
+
+- **The enforceable gate lives in the service** (`packages/cloud/src/services/auth.ts`).
+  Cloud backup is the one premium feature we run and pay for, so it checks live
+  account state on every request. A lapsed subscriber is refused regardless of
+  what their machine believes. This is the gate that matters.
+- **The app's gate is a product decision, not security**
+  (`requirePremium` / `currentTier` in `packages/api/src/services/settings.ts`).
+  It reads a cached entitlement — plain JSON, unsigned — and is bypassable by
+  anyone willing to edit a file. That is acceptable, and saying so plainly in
+  the code stops someone "hardening" it back into a licence system.
+- **Sign-in is a mailed six-digit code** exchanged once for a durable device
+  token. No passwords, so no password database to leak. The code is single-use,
+  attempt-limited, expires in 15 minutes, and the endpoint answers identically
+  for an unknown address so it can't be used to test whether someone is a
+  customer.
+- **The entitlement is cached so the app works offline.** `refreshAfter` (1 day)
+  and `expiresAt` (14 days) are deliberately far apart: a laptop offline for a
+  fortnight keeps premium, while a cancellation still takes effect without us
+  reaching the machine. Malformed cached data fails closed.
 - **The Stripe webhook is the only thing that changes subscription state**, and
-  it now records _every_ status — including the ones that end a subscription.
-  A cancellation that never landed would leave someone premium indefinitely.
-- **A cancelled subscriber stays premium until the period they paid for ends.**
-  `canceled` and `past_due` both still count while the period runs; revoking
-  early would be taking back something already bought.
-- **Backups stay reachable across the change.** They were namespaced by licence
-  id, so the account record stores that namespace — otherwise signing in with a
-  token would show an empty account to someone with years of backups.
+  it records _every_ status, including the ones that end a subscription. It
+  mints nothing and emails nothing — the app asks for its own entitlement, so
+  there is no artefact to deliver.
+- **A cancelled or `past_due` subscriber keeps premium until the period they
+  paid for ends.** Revoking early takes back something already bought.
+- **Backups are namespaced by a hash derived from the Stripe subscription**
+  (`services/namespaces.ts`), not by account id. That derivation predates
+  accounts and has to survive them: changing it orphans every existing backup.
 
-`packages/api/src/services/licensing.ts` prefers the account and only falls
-back to a licence key when there is no account, so a signed-in user's tier can
-never be raised by an old key lying around.
-
-### Licence keys (legacy)
-
-Entitlement comes from an **Ed25519-signed licence key**, verified offline
-against a public key embedded at build time (`DSV_LICENSE_PUBLIC_KEY`). This
-replaced an earlier version that believed whatever tier the client claimed.
-
-- The stored key is **re-verified on every read**, not trusted from a database
-  column, so an expired licence downgrades on its own with no stale-premium
-  state to go wrong.
-- `packages/api/src/services/license-keys.ts` splits verify (public key, ships
-  to users) from sign (private key, issuer only). Nothing on a user's machine
-  can mint a licence. Tests prove forged, tampered and expired keys are refused.
-- Mint keys with `node scripts/issue-license.mjs --email … --tier premium`.
-  `--generate-keypair` creates an issuer pair. The dev private key is
-  gitignored; the production key must never be in the repo.
-- Still open, and deliberately not guessed: **the price of premium**, and where
-  the issuer runs / which payment webhook drives it. The landing page shows no
-  number on purpose.
-
-## Product assets
-
-Generated stores **download their product images** rather than hotlinking
-`ae01.alicdn.com`. A store that hotlinks a marketplace CDN is not one the user
-owns: the URLs rot when a listing changes, AliExpress can block them, and every
-visitor to the user's shop hits a site the user doesn't control.
-
-This costs us nothing by construction — the download runs on the user's machine
-and the bytes land in their project, on their way to their own host. It is the
-same rule as everything else here, applied to images.
-
-- `packages/store-generator/src/assets/` — `download.ts` is the pure part
-  (naming, sniffing, guards), `index.ts` writes to `public/images/`.
-- **Bytes decide the extension, not the URL.** AliExpress serves AVIF behind
-  `.jpg` addresses; trusting the URL gives the user a gallery their browser
-  won't decode. Magic-byte sniff first, then `content-type`, then the URL.
-- Names are **positional** (`product-01.jpg`), never derived from the source
-  filename — those are opaque hashes and would put marketplace identifiers into
-  the user's repository.
-- **Partial success is normal.** An image that won't download keeps its remote
-  URL and becomes a warning; one dead CDN link must not cost someone their store.
-- Guards: `http(s)` only (a scraped page is untrusted input), 8MB per image, 16
-  images per store, and every path re-checked against the output directory.
-- `ProductImage.url` therefore accepts an absolute URL **or** a root-relative
-  path (`ImageSrcSchema` in `packages/shared/src/product.ts`).
-
-## Per-store dev environment
-
-`Stores → Dev environment` runs a real `npm install` in the store's own folder.
-
-The store the preview runs is **not a project anyone can open**: its
-`node_modules` is a symlink to our shared Astro runtime, which resolves only on
-that machine while the app is installed. Everything the README tells the user to
-do next — open it in an editor, commit it, copy it to a build machine — assumes a
-real install.
-
-- Pure parts (command building, npm output parsing) in
-  `packages/store-generator/src/dev-env.ts`; spawning in
-  `apps/desktop/electron/dev-env.ts`.
-- **The symlink must be removed before installing.** npm would otherwise follow
-  it and install into the _shared_ runtime, corrupting the preview for every
-  other store. `rm` on a symlink removes the link, never the target — there is a
-  test for exactly that.
-- `npm install`, never `npm ci`: a generated store ships no lockfile.
-- We **do not bundle a Node toolchain.** If npm isn't on the user's machine we
-  say so and print the command. A GUI-launched app inherits a minimal PATH, so
-  the usual Node locations are probed explicitly.
-- The preview prefers the store's own `astro` once it has one, so after setup the
-  preview runs exactly what the user's `npm run dev` would.
-- Generated stores ship `.nvmrc`, `.editorconfig`, `.env.example` and
-  `DEVELOPMENT.md`; `.gitignore` excludes `.env` and keeps `.env.example`.
-- **`@repo/desktop` depends on `astro` and both adapters** — that is the shared
-  preview runtime. Without the adapters, previewing a premium Vercel/Netlify
-  store fails with `Cannot find module '@astrojs/vercel'`. Keep those versions
-  matching what `generate/templates/project.ts` pins into the store.
+One consequence worth stating: the service now stores an email per account,
+where before it stored nothing identifying. Backups themselves still carry no
+identity — there are tests asserting that specifically, scoped to the `backups/`
+prefix.
 
 ## Store preview
 

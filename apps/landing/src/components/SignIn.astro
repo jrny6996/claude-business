@@ -1,110 +1,35 @@
 ---
 /**
- * Licence sign-in.
+ * Where a subscriber goes after paying.
  *
- * There are no accounts and no passwords: a licence key *is* the credential,
- * and it is verified by signature rather than by asking a server. That means
- * this page can confirm a licence with no backend at all, and the app can do
- * the same offline.
- *
- * The page reads a key only to show what it covers — activation happens in the
- * app. Nothing is transmitted anywhere.
+ * There is nothing to paste any more. Premium is an account: you sign in inside
+ * the app with a code sent to your email, and it stays premium through renewals
+ * without you doing anything. So this section's job is only to say where to go
+ * and what to expect — the sign-in itself happens in the app, because that is
+ * the thing that needs to know.
  */
 ---
 
 <section class="wrap section" id="signin">
-  <div class="section-label">Your licence</div>
+  <div class="section-label">Already subscribed?</div>
   <p class="lead">
-    Premium is a licence key, not an account. Paste yours to check what it
-    covers, then activate it in the app under Settings → Licence.
+    Premium is tied to your account, not to a key you have to keep. Open the app,
+    go to <strong>Settings → Subscription</strong>, and sign in with the email
+    address you subscribed with. We'll send you a six-digit code — there's no
+    password to remember.
   </p>
 
-  <form class="signin-form" data-signin>
-    <div class="field">
-      <label for="license-input">Licence key</label>
-      <input
-        id="license-input"
-        class="input"
-        name="key"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="eyJ2IjoxLCJlbWFpbCI6…"
-      />
-    </div>
-    <button class="btn btn-primary" type="submit">Check licence</button>
-  </form>
-
-  <div class="signin-result" data-signin-result hidden></div>
+  <ul class="list-plain" style="margin-top: var(--space-4); max-width: 62ch">
+    <li>Renewals need nothing from you — the app checks your subscription itself.</li>
+    <li>Works offline. It only needs to reach us occasionally to stay current.</li>
+    <li>
+      Cancel any time and premium keeps working to the end of the period you
+      already paid for.
+    </li>
+  </ul>
 
   <p class="footnote">
-    Your key never leaves this page — it is decoded in your browser. Lost it?
-    It's on your purchase receipt.
+    Signing in on a new machine is the same three steps, and you can be signed in
+    on as many as you like. Signing out on one doesn't affect the others.
   </p>
 </section>
-
-<script>
-  const form = document.querySelector("[data-signin]");
-  const result = document.querySelector("[data-signin-result]");
-
-  const show = (message, tone) => {
-    if (!(result instanceof HTMLElement)) return;
-    result.hidden = false;
-    result.className = tone === "ok" ? "signin-result is-ok" : "signin-result is-bad";
-    result.textContent = message;
-  };
-
-  const decode = (part) => {
-    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-    return JSON.parse(atob(padded));
-  };
-
-  form?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (!(form instanceof HTMLFormElement)) return;
-
-    const key = String(new FormData(form).get("key") ?? "").trim();
-    const parts = key.split(".");
-
-    if (parts.length !== 2) {
-      show("That doesn't look like a licence key. Copy it again from your receipt.", "bad");
-      return;
-    }
-
-    let payload;
-    try {
-      payload = decode(parts[0]);
-    } catch {
-      show("That key couldn't be read. Copy it again from your receipt.", "bad");
-      return;
-    }
-
-    if (!payload || payload.v !== 1 || !payload.tier) {
-      show("That key isn't in a format this version understands.", "bad");
-      return;
-    }
-
-    const expired =
-      payload.expiresAt && Date.parse(payload.expiresAt) <= Date.now();
-
-    if (expired) {
-      show(
-        `That licence covered ${payload.tier} for ${payload.email} and expired on ${String(payload.expiresAt).slice(0, 10)}.`,
-        "bad",
-      );
-      return;
-    }
-
-    // Deliberately not called "valid": the signature is checked in the app,
-    // which has the public key. Claiming more than we verified here would be a
-    // lie a forged key could exploit.
-    show(
-      `This key claims ${payload.tier} for ${payload.email}${
-        payload.expiresAt
-          ? `, through ${String(payload.expiresAt).slice(0, 10)}`
-          : ", with no expiry"
-      }. Activate it in the app to verify and switch it on.`,
-      "ok",
-    );
-  });
-</script>

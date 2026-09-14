@@ -3,12 +3,18 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Aes256GcmCipher, createDataLayer, type DataLayer } from "@repo/db";
-import { generateLicenseKeyPair, signLicensePayload } from "./services/license-keys.js";
 import type { BinaryFetchLike, FetchLike } from "@repo/store-generator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "./context.js";
 import { createApp } from "./index.js";
-import { MemoryBlobStore, createCloudApp } from "@repo/cloud";
+import {
+  MemoryBlobStore,
+  applySubscriptionState,
+  createCloudApp,
+  issueSigninCode,
+  redeemSigninCode,
+  type CloudContext,
+} from "@repo/cloud";
 
 const PRODUCT_HTML = `<!doctype html><html><head>
 <script>
@@ -144,26 +150,28 @@ let harness: Harness;
 let tempRoot: string;
 
 /**
- * A throwaway issuer keypair. Signing real licences in tests is the only way to
- * exercise the path users actually take — the API deliberately has no way to
- * grant a tier without a valid signature.
+ * Puts a premium entitlement in the app's cache, the way a sign-in would.
+ *
+ * Entitlements are plain data now: nothing is signed, because everything this
+ * gates runs on the user's machine. The enforceable gate lives in the service.
  */
-const issuer = generateLicenseKeyPair();
-
-function licenseKey(
-  over: Partial<{ tier: "free" | "premium"; expiresAt: string | null }> = {},
-): string {
-  return signLicensePayload(
-    {
-      v: 1,
+function grantPremium(
+  over: Partial<{ tier: "free" | "premium"; expiresAt: string; periodEnd: string | null }> = {},
+): void {
+  harness.data.settings.set(
+    "account.entitlement",
+    JSON.stringify({
+      accountId: "acct_test",
       email: "buyer@example.com",
       tier: over.tier ?? "premium",
-      expiresAt: over.expiresAt === undefined ? "2027-01-01T00:00:00.000Z" : over.expiresAt,
-      issuedAt: "2026-09-04T00:00:00.000Z",
-      id: "lic_test_1",
-    },
-    issuer.privateKeyPem,
+      status: "active",
+      periodEnd: over.periodEnd === undefined ? "2027-01-01T00:00:00.000Z" : over.periodEnd,
+      refreshAfter: "2026-09-05T12:00:00.000Z",
+      expiresAt: over.expiresAt ?? "2026-09-18T12:00:00.000Z",
+      issuedAt: "2026-09-04T12:00:00.000Z",
+    }),
   );
+  harness.data.settings.writeSecret("device_token", "dev_test_token");
 }
 
 beforeEach(() => {
@@ -179,7 +187,6 @@ beforeEach(() => {
     fetchImpl,
     assetFetchImpl: assets.assetFetchImpl,
     now: () => new Date("2026-09-04T12:00:00.000Z"),
-    licensePublicKeyPem: issuer.publicKeyPem,
   };
 
   const app = createApp(ctx);
@@ -378,118 +385,45 @@ describe("settings", () => {
   });
 });
 
-describe("licensing", () => {
-  it("starts on the free tier with no licence", async () => {
-    const { payload } = await harness.request("GET", "/api/license");
-    const value = payload.value as { tier: string; license: unknown };
-    expect(value.tier).toBe("free");
-    expect(value.license).toBeNull();
-  });
-
-  it("activates a genuine licence and unlocks premium features", async () => {
-    const activated = await harness.request("POST", "/api/license/activate", {
-      key: licenseKey(),
-    });
-    expect(activated.status).toBe(200);
-    expect((activated.payload.value as { tier: string }).tier).toBe("premium");
-
-    const backup = await harness.request("PUT", "/api/settings/backup", {
+describe("premium gating", () => {
+  it("is free with no account", async () => {
+    const { status } = await harness.request("PUT", "/api/settings/backup", {
       enabled: true,
       directory: join(tempRoot, "backups"),
     });
-    expect(backup.status).toBe(200);
+    expect(status).toBe(402);
   });
 
-  it("refuses a forged licence", async () => {
-    const forged = generateLicenseKeyPair();
-    const key = signLicensePayload(
-      {
-        v: 1,
-        email: "attacker@example.com",
-        tier: "premium",
-        expiresAt: null,
-        issuedAt: "2026-09-04T00:00:00.000Z",
-        id: "lic_forged",
-      },
-      forged.privateKeyPem,
-    );
+  it("unlocks premium features once an entitlement is cached", async () => {
+    grantPremium();
 
-    const { status, payload } = await harness.request(
-      "POST",
-      "/api/license/activate",
-      { key },
-    );
-    expect(status).toBe(400);
-    expect(payload.error?.message).toMatch(/isn't genuine/i);
-  });
-
-  it("refuses a tampered licence", async () => {
-    const key = licenseKey();
-    const tampered = `${key.slice(0, -6)}AAAAAA`;
-
-    const { status } = await harness.request("POST", "/api/license/activate", {
-      key: tampered,
+    const { status } = await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: join(tempRoot, "backups"),
     });
-    expect(status).toBe(400);
+    expect(status).toBe(200);
   });
 
-  it("refuses a licence that expired", async () => {
-    const { status, payload } = await harness.request(
-      "POST",
-      "/api/license/activate",
-      { key: licenseKey({ expiresAt: "2020-01-01T00:00:00.000Z" }) },
-    );
-    expect(status).toBe(400);
-    expect(payload.error?.message).toMatch(/expired/i);
-  });
-
-  it("refuses junk", async () => {
-    const { status, payload } = await harness.request(
-      "POST",
-      "/api/license/activate",
-      { key: "definitely-not-a-licence" },
-    );
-    expect(status).toBe(400);
-    expect(payload.error?.message).toMatch(/doesn't look like a licence key/i);
-  });
-
-  it("downgrades on its own once a licence lapses", async () => {
-    // Activated while valid, then read back after the expiry passes: the stored
-    // key is re-verified on every read rather than trusted from the database.
-    await harness.request("POST", "/api/license/activate", {
-      key: licenseKey({ expiresAt: "2026-09-05T00:00:00.000Z" }),
-    });
-    expect(
-      ((await harness.request("GET", "/api/license")).payload.value as {
-        tier: string;
-      }).tier,
-    ).toBe("premium");
-
+  it("locks again once the cached entitlement goes stale", async () => {
+    grantPremium({ expiresAt: "2026-09-10T00:00:00.000Z" });
     harness.ctx.now = () => new Date("2026-10-01T00:00:00.000Z");
 
-    const later = (await harness.request("GET", "/api/license")).payload.value as {
-      tier: string;
-      license: { valid: boolean };
-    };
-    expect(later.tier).toBe("free");
-    expect(later.license.valid).toBe(false);
+    const { status } = await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: join(tempRoot, "backups"),
+    });
+    expect(status).toBe(402);
   });
 
-  it("never returns the licence key itself, only a hint", async () => {
-    const key = licenseKey();
-    await harness.request("POST", "/api/license/activate", { key });
+  it("ignores a cached entitlement that isn't shaped like one", async () => {
+    // Freeing the gate from signatures means bad data must fail closed.
+    harness.data.settings.set("account.entitlement", '{"tier":"premium"}');
 
-    const { payload } = await harness.request("GET", "/api/license");
-    expect(JSON.stringify(payload)).not.toContain(key);
-    expect((payload.value as { license: { hint: string } }).license.hint).toContain(
-      "\u2026",
-    );
-  });
-
-  it("deactivates back to free", async () => {
-    await harness.request("POST", "/api/license/activate", { key: licenseKey() });
-    const { payload } = await harness.request("DELETE", "/api/license");
-    expect((payload.value as { tier: string }).tier).toBe("free");
+    const { status } = await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: join(tempRoot, "backups"),
+    });
+    expect(status).toBe(402);
   });
 });
 
@@ -533,8 +467,7 @@ describe("store creation", () => {
     expect(existsSync(join(result.store.outputDir, "src/data/store.json"))).toBe(true);
   });
 
-  const goPremium = () =>
-    harness.request("POST", "/api/license/activate", { key: licenseKey() });
+  const goPremium = async () => grantPremium();
 
   it("gives a free store a waitlist, not checkout", async () => {
     const { payload } = await harness.request("POST", "/api/stores", {
@@ -1024,16 +957,39 @@ describe("deploy", () => {
  */
 describe("cloud backup", () => {
   let cloudBlobs: MemoryBlobStore;
+  let cloudCtx: CloudContext;
 
-  const goPremium = () =>
-    harness.request("POST", "/api/license/activate", {
-      key: licenseKey({ expiresAt: null }),
+  /**
+   * Makes the account premium on both sides.
+   *
+   * The app's cached entitlement is only how the *app* decides what to offer;
+   * the service enforces premium itself against live account state, so the
+   * account has to exist there too — which is the point of the split.
+   */
+  const goPremium = async () => {
+    await applySubscriptionState(cloudCtx, {
+      email: "buyer@example.com",
+      stripeCustomerId: "cus_test",
+      subscriptionId: "sub_test",
+      status: "active",
+      periodEnd: "2027-01-01T00:00:00.000Z",
     });
+
+    const { code } = await issueSigninCode(cloudCtx, "buyer@example.com");
+    const { deviceToken } = await redeemSigninCode(
+      cloudCtx,
+      "buyer@example.com",
+      code,
+    );
+
+    grantPremium({ periodEnd: null });
+    harness.data.settings.writeSecret("device_token", deviceToken);
+  };
 
   beforeEach(() => {
     cloudBlobs = new MemoryBlobStore();
 
-    const cloud = createCloudApp({
+    cloudCtx = {
       config: {
         premiumPriceId: "price_test",
         siteUrl: "https://cloud.test",
@@ -1044,12 +1000,10 @@ describe("cloud backup", () => {
       blobs: cloudBlobs,
       stripe: {} as never,
       mailer: { send: async () => {} },
-      // The service verifies the licences this test harness signs.
-      licensePrivateKeyPem: issuer.privateKeyPem,
-      licensePublicKeyPem: issuer.publicKeyPem,
       stripeWebhookSecret: "whsec_test",
       now: () => new Date("2026-09-04T12:00:00.000Z"),
-    });
+    };
+    const cloud = createCloudApp(cloudCtx);
 
     harness.ctx.cloudBaseUrl = "https://cloud.test";
     harness.ctx.cloudFetchImpl = ((input: RequestInfo | URL, init?: RequestInit) =>
@@ -1095,7 +1049,9 @@ describe("cloud backup", () => {
 
     await harness.request("POST", "/api/deploy/backup");
 
-    const stored = await cloudBlobs.list("");
+    // Account records share the store now, so scope this to backups: the
+    // claim is that a *backup* reveals nothing, not that we hold no emails.
+    const stored = await cloudBlobs.list("backups/");
     expect(stored).toHaveLength(1);
 
     const blob = await cloudBlobs.get(stored[0]!.key);
@@ -1222,9 +1178,7 @@ describe("cloud backup", () => {
 });
 
 async function goPremiumWithBackupDir(): Promise<void> {
-  await harness.request("POST", "/api/license/activate", {
-    key: licenseKey({ expiresAt: null }),
-  });
+  grantPremium({ periodEnd: null });
   await harness.request("PUT", "/api/settings/backup", {
     enabled: true,
     directory: join(tempRoot, "backups"),
@@ -1240,7 +1194,7 @@ async function goPremiumWithBackupDir(): Promise<void> {
 describe("account", () => {
   const CLOUD = "https://cloud.test";
 
-  /** Signs an entitlement the way the hosted service would. */
+  /** The entitlement the hosted service would return. Plain data, unsigned. */
   const entitlement = (
     over: Partial<{
       tier: "free" | "premium";
@@ -1249,27 +1203,16 @@ describe("account", () => {
       refreshAfter: string;
       expiresAt: string;
     }> = {},
-  ) => {
-    const payload = {
-      v: 1,
-      accountId: "acct_test",
-      email: "buyer@example.com",
-      tier: over.tier ?? "premium",
-      status: over.status ?? "active",
-      periodEnd: over.periodEnd === undefined ? "2027-01-01T00:00:00.000Z" : over.periodEnd,
-      refreshAfter: over.refreshAfter ?? "2026-09-05T12:00:00.000Z",
-      expiresAt: over.expiresAt ?? "2026-09-18T12:00:00.000Z",
-      issuedAt: "2026-09-04T12:00:00.000Z",
-    };
-    const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-    const { sign, createPrivateKey } = require("node:crypto");
-    const signature = sign(
-      null,
-      new TextEncoder().encode(encoded),
-      createPrivateKey(issuer.privateKeyPem),
-    );
-    return `${encoded}.${signature.toString("base64url")}`;
-  };
+  ) => ({
+    accountId: "acct_test",
+    email: "buyer@example.com",
+    tier: over.tier ?? "premium",
+    status: over.status ?? "active",
+    periodEnd: over.periodEnd === undefined ? "2027-01-01T00:00:00.000Z" : over.periodEnd,
+    refreshAfter: over.refreshAfter ?? "2026-09-05T12:00:00.000Z",
+    expiresAt: over.expiresAt ?? "2026-09-18T12:00:00.000Z",
+    issuedAt: "2026-09-04T12:00:00.000Z",
+  });
 
   /** Stands in for the hosted service. */
   const cloud = (handlers: Record<string, () => { status?: number; body: unknown }>) => {
@@ -1312,9 +1255,12 @@ describe("account", () => {
       status: "active",
     });
 
-    // And the rest of the app agrees, so premium features unlock.
-    const license = await harness.request("GET", "/api/license");
-    expect((license.payload.value as { tier: string }).tier).toBe("premium");
+    // And a premium-gated feature actually unlocks.
+    const backup = await harness.request("PUT", "/api/settings/backup", {
+      enabled: true,
+      directory: join(tempRoot, "backups"),
+    });
+    expect(backup.status).toBe(200);
   });
 
   it("never stores the device token where it can be read back", async () => {
@@ -1332,33 +1278,23 @@ describe("account", () => {
     expect(JSON.stringify(state.payload)).not.toContain("dev_secret_value");
   });
 
-  it("refuses an entitlement that isn't signed by us", async () => {
-    const forged = generateLicenseKeyPair();
-    const payload = Buffer.from(
-      JSON.stringify({
-        v: 1,
-        accountId: "acct_x",
-        email: "attacker@example.com",
-        tier: "premium",
-        status: "active",
-        periodEnd: "2030-01-01T00:00:00.000Z",
-        refreshAfter: "2030-01-01T00:00:00.000Z",
-        expiresAt: "2030-01-01T00:00:00.000Z",
-        issuedAt: "2026-09-04T00:00:00.000Z",
-      }),
-    ).toString("base64url");
-    const { sign, createPrivateKey } = await import("node:crypto");
-    const bad = `${payload}.${sign(null, new TextEncoder().encode(payload), createPrivateKey(forged.privateKeyPem)).toString("base64url")}`;
-
+  it("refuses an entitlement that isn't shaped like one", async () => {
+    // Nothing is signed any more, so malformed or partial data must fail closed
+    // rather than being half-trusted.
     cloud({
       "/api/account/verify": () => ({
-        body: { ok: true, value: { deviceToken: "dev_abc", entitlement: bad } },
+        body: {
+          ok: true,
+          value: { deviceToken: "dev_abc", entitlement: { tier: "premium" } },
+        },
       }),
     });
-    await harness.request("POST", "/api/account/verify", {
+
+    const verified = await harness.request("POST", "/api/account/verify", {
       email: "buyer@example.com",
       code: "123456",
     });
+    expect(verified.status).toBe(500);
 
     const state = await harness.request("GET", "/api/account");
     expect((state.payload.value as { tier: string }).tier).toBe("free");

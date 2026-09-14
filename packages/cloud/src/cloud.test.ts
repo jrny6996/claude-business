@@ -1,4 +1,4 @@
-import { createHmac, generateKeyPairSync } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { BACKUP_CREATED_AT_HEADER } from "@repo/shared";
 import { DEFAULT_CLOUD_CONFIG, type CloudContext } from "./context.js";
@@ -6,7 +6,8 @@ import { createCloudApp } from "./index.js";
 import { MemoryBlobStore } from "./storage/blobs.js";
 import { S3BlobStore } from "./storage/s3.js";
 import { createServer, type Server } from "node:http";
-import { issueLicense, licenseIdForSubscription } from "./services/issuer.js";
+import { accountNamespace, licenseIdForSubscription } from "./services/namespaces.js";
+import { findAccountByEmail, isPremiumNow } from "./services/accounts.js";
 import type { Mailer, OutgoingMail } from "./services/mail.js";
 import type {
   StripeApi,
@@ -15,15 +16,6 @@ import type {
   StripePriceDetails,
   StripeSubscription,
 } from "./services/stripe.js";
-
-/** A throwaway issuer keypair — the real one never exists in the repo. */
-const issuer = (() => {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  return {
-    publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
-    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-  };
-})();
 
 const WEBHOOK_SECRET = "whsec_test_secret";
 const NOW = new Date("2026-09-08T12:00:00.000Z");
@@ -107,17 +99,40 @@ const request = async (
   return { status: response.status, payload, response };
 };
 
-/** A valid premium licence for the fake subscription. */
-const premiumKey = (over: { periodEnd?: number; email?: string } = {}): string =>
-  issueLicense(
-    {
-      email: over.email ?? "buyer@example.com",
-      subscriptionId: "sub_123",
-      periodEnd: over.periodEnd ?? PERIOD_END,
-      issuedAt: NOW,
-    },
-    issuer.privateKeyPem,
-  ).key;
+/**
+ * Signs in as a premium subscriber and returns the device token.
+ *
+ * Goes through the real webhook and sign-in routes rather than seeding blobs,
+ * so the tests exercise the path a customer actually takes.
+ */
+const signInPremium = async (
+  email = "buyer@example.com",
+  subscriptionId = "sub_123",
+): Promise<string> => {
+  const body = eventBody("checkout.session.completed", {
+    subscription: subscriptionId,
+    customer_email: email,
+  });
+  await request("POST", "/api/stripe/webhook", {
+    body,
+    headers: { "stripe-signature": stripeSignature(body) },
+  });
+
+  await request("POST", "/api/account/signin", {
+    body: JSON.stringify({ email }),
+    headers: { "Content-Type": "application/json" },
+  });
+  const code = /\b(\d{6})\b/.exec(mailer.sent.at(-1)?.subject ?? "")?.[1];
+
+  const verified = await request("POST", "/api/account/verify", {
+    body: JSON.stringify({ email, code }),
+    headers: { "Content-Type": "application/json" },
+  });
+  return verified.payload.value.deviceToken as string;
+};
+
+/** Provisioned in beforeEach so existing tests can use it synchronously. */
+let premiumToken = "";
 
 const auth = (key: string) => ({ Authorization: `Bearer ${key}` });
 
@@ -145,8 +160,6 @@ beforeEach(() => {
     blobs,
     stripe,
     mailer,
-    licensePrivateKeyPem: issuer.privateKeyPem,
-    licensePublicKeyPem: issuer.publicKeyPem,
     stripeWebhookSecret: WEBHOOK_SECRET,
     now: () => NOW,
   };
@@ -162,7 +175,6 @@ describe("health", () => {
     expect(payload.value.configured).toEqual({
       stripe: true,
       webhook: true,
-      issuer: true,
     });
     expect(JSON.stringify(payload)).not.toContain(WEBHOOK_SECRET);
     expect(JSON.stringify(payload)).not.toContain("PRIVATE KEY");
@@ -202,7 +214,7 @@ describe("stripe webhook", () => {
       customer_email: "buyer@example.com",
     });
 
-  it("issues and emails a licence on a completed checkout", async () => {
+  it("records the subscription on a completed checkout", async () => {
     const raw = body();
     const { status } = await request("POST", "/api/stripe/webhook", {
       body: raw,
@@ -210,9 +222,12 @@ describe("stripe webhook", () => {
     });
 
     expect(status).toBe(200);
-    expect(mailer.sent).toHaveLength(1);
-    expect(mailer.sent[0]?.to).toBe("buyer@example.com");
-    expect(mailer.sent[0]?.text).toContain(".");
+    // Nothing is minted or mailed any more — the app asks for its entitlement,
+    // so there is no artefact to deliver.
+    expect(mailer.sent).toHaveLength(0);
+
+    const account = await findAccountByEmail(ctx, "buyer@example.com");
+    expect(account).toMatchObject({ status: "active", subscriptionId: "sub_123" });
   });
 
   it("refuses an unsigned request", async () => {
@@ -273,28 +288,28 @@ describe("stripe webhook", () => {
     expect(JSON.stringify(payload)).not.toMatch(/timestamp|mismatch|old/i);
   });
 
-  it("issues nothing for a subscription that isn't paying", async () => {
-    stripe.subscription = { ...stripe.subscription, status: "past_due" };
+  it("records a subscription that isn't paying, without granting it", async () => {
+    stripe.subscription = { ...stripe.subscription, status: "incomplete" };
     const raw = body();
-
-    const { status } = await request("POST", "/api/stripe/webhook", {
+    await request("POST", "/api/stripe/webhook", {
       body: raw,
       headers: { "stripe-signature": stripeSignature(raw) },
     });
 
-    expect(status).toBe(200);
-    expect(mailer.sent).toHaveLength(0);
+    const account = await findAccountByEmail(ctx, "buyer@example.com");
+    expect(account?.status).toBe("none");
+    expect(isPremiumNow(account!, NOW)).toBe(false);
   });
 
-  it("re-issues on renewal with the same licence id and a later expiry", async () => {
+  it("moves the period end on a renewal", async () => {
     const first = body();
     await request("POST", "/api/stripe/webhook", {
       body: first,
       headers: { "stripe-signature": stripeSignature(first) },
     });
 
-    const laterEnd = PERIOD_END + 365 * 24 * 60 * 60;
-    stripe.subscription = { ...stripe.subscription, current_period_end: laterEnd };
+    const renewedEnd = Math.floor(Date.parse("2028-09-08T12:00:00.000Z") / 1000);
+    stripe.subscription = { ...stripe.subscription, current_period_end: renewedEnd };
 
     const renewal = eventBody("invoice.paid", { subscription: "sub_123" });
     await request("POST", "/api/stripe/webhook", {
@@ -302,39 +317,32 @@ describe("stripe webhook", () => {
       headers: { "stripe-signature": stripeSignature(renewal) },
     });
 
-    expect(mailer.sent).toHaveLength(2);
-
-    // The key is the one line shaped `<base64url>.<base64url>` — the prose
-    // around it contains full stops too.
-    const decode = (mail: OutgoingMail) => {
-      const key = mail.text
-        .split("\n")
-        .map((line) => line.trim())
-        .find((line) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(line));
-      expect(key).toBeDefined();
-      return JSON.parse(
-        Buffer.from(key!.split(".")[0]!, "base64url").toString("utf8"),
-      ) as { id: string; expiresAt: string };
-    };
-
-    const [a, b] = mailer.sent.map(decode);
-    // Same identity across renewals, or a subscriber's cloud backups — which
-    // are namespaced by licence id — would be orphaned once a year.
-    expect(a!.id).toBe(b!.id);
-    expect(Date.parse(b!.expiresAt)).toBeGreaterThan(Date.parse(a!.expiresAt));
+    const account = await findAccountByEmail(ctx, "buyer@example.com");
+    expect(account?.periodEnd?.slice(0, 4)).toBe("2028");
+    // The account id is stable across renewals, so backups stay reachable.
+    expect(account?.backupNamespace).toBe(
+      accountNamespace(licenseIdForSubscription("sub_123")),
+    );
   });
 
-  // A cancelled subscriber has already paid for the current period.
-  it("does not revoke anything on cancellation", async () => {
-    const raw = eventBody("customer.subscription.deleted", { id: "sub_123" });
-
-    const { status } = await request("POST", "/api/stripe/webhook", {
-      body: raw,
-      headers: { "stripe-signature": stripeSignature(raw) },
+  it("records a cancellation without ending the paid period", async () => {
+    const first = body();
+    await request("POST", "/api/stripe/webhook", {
+      body: first,
+      headers: { "stripe-signature": stripeSignature(first) },
     });
 
-    expect(status).toBe(200);
-    expect(mailer.sent).toHaveLength(0);
+    stripe.subscription = { ...stripe.subscription, status: "canceled" };
+    const cancel = eventBody("customer.subscription.deleted", { id: "sub_123" });
+    await request("POST", "/api/stripe/webhook", {
+      body: cancel,
+      headers: { "stripe-signature": stripeSignature(cancel) },
+    });
+
+    const account = await findAccountByEmail(ctx, "buyer@example.com");
+    expect(account?.status).toBe("canceled");
+    // Still premium: they paid through PERIOD_END, which is in the future.
+    expect(isPremiumNow(account!, NOW)).toBe(true);
   });
 
   it("still succeeds when the email provider is down", async () => {
@@ -352,63 +360,6 @@ describe("stripe webhook", () => {
   });
 });
 
-describe("licence recovery", () => {
-  it("emails the current licence to a subscriber", async () => {
-    stripe.byEmail = [stripe.subscription];
-
-    const { status } = await request("POST", "/api/license/recover", {
-      body: JSON.stringify({ email: "buyer@example.com" }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    expect(status).toBe(200);
-    expect(mailer.sent).toHaveLength(1);
-  });
-
-  // Otherwise this endpoint answers "does this person use the product?" for
-  // anyone who asks.
-  it("answers identically for an address that never bought anything", async () => {
-    stripe.byEmail = [];
-
-    const known = await request("POST", "/api/license/recover", {
-      body: JSON.stringify({ email: "nobody@example.com" }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    stripe.byEmail = [stripe.subscription];
-    const buyer = await request("POST", "/api/license/recover", {
-      body: JSON.stringify({ email: "buyer@example.com" }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    expect(known.status).toBe(buyer.status);
-    expect(known.payload).toEqual(buyer.payload);
-  });
-
-  it("returns the key for a just-completed checkout", async () => {
-    const { status, payload } = await request(
-      "GET",
-      "/api/license/complete?session_id=cs_123",
-    );
-
-    expect(status).toBe(200);
-    expect(payload.value.status).toBe("ready");
-    expect(payload.value.key).toContain(".");
-    expect(payload.value.email).toBe("buyer@example.com");
-  });
-
-  it("reports pending while Stripe is still creating the subscription", async () => {
-    stripe.session = { ...stripe.session, subscription: null };
-
-    const { payload } = await request(
-      "GET",
-      "/api/license/complete?session_id=cs_123",
-    );
-
-    expect(payload.value).toMatchObject({ status: "pending", key: null });
-  });
-});
-
 describe("backup auth", () => {
   it("refuses an unauthenticated request", async () => {
     const { status, payload } = await request("GET", "/api/backup");
@@ -417,47 +368,45 @@ describe("backup auth", () => {
     expect(payload.error.code).toBe("UNAUTHORIZED");
   });
 
-  it("refuses a forged licence", async () => {
-    const { publicKey: _p, privateKey } = generateKeyPairSync("ed25519");
-    const forged = issueLicense(
-      {
-        email: "attacker@example.com",
-        subscriptionId: "sub_evil",
-        periodEnd: PERIOD_END,
-        issuedAt: NOW,
-      },
-      privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-    ).key;
-
-    const { status } = await request("GET", "/api/backup", { headers: auth(forged) });
-    expect(status).toBe(401);
-  });
-
-  it("refuses an expired licence", async () => {
-    const expired = premiumKey({
-      periodEnd: Math.floor(Date.parse("2026-01-01T00:00:00.000Z") / 1000),
+  it("refuses a token that isn't ours", async () => {
+    const { status } = await request("GET", "/api/backup", {
+      headers: auth("not-a-real-device-token"),
     });
-
-    const { status } = await request("GET", "/api/backup", { headers: auth(expired) });
     expect(status).toBe(401);
   });
 
-  it("refuses a licence whose payload was tampered with", async () => {
-    const key = premiumKey();
-    const [payloadPart, signature] = key.split(".");
-    const decoded = JSON.parse(
-      Buffer.from(payloadPart!, "base64url").toString("utf8"),
-    );
-    decoded.expiresAt = "2099-01-01T00:00:00.000Z";
-    const swapped = `${Buffer.from(JSON.stringify(decoded)).toString("base64url")}.${signature}`;
+  it("refuses a device that has been signed out", async () => {
+    const token = await signInPremium();
+    await request("DELETE", "/api/account/device", { headers: auth(token) });
 
-    const { status } = await request("GET", "/api/backup", { headers: auth(swapped) });
+    const { status } = await request("GET", "/api/backup", { headers: auth(token) });
     expect(status).toBe(401);
+  });
+
+  it("refuses an account whose paid period has ended", async () => {
+    // The gate reads live account state, so a lapsed subscription is refused
+    // even though the device token itself is still perfectly valid.
+    stripe.subscription = {
+      ...stripe.subscription,
+      status: "canceled",
+      current_period_end: Math.floor(Date.parse("2026-01-01T00:00:00.000Z") / 1000),
+    };
+    const token = await signInPremium();
+
+    const { status, payload } = await request("GET", "/api/backup", {
+      headers: auth(token),
+    });
+    expect(status).toBe(402);
+    expect(payload.error.code).toBe("PREMIUM_REQUIRED");
   });
 });
 
 describe("backups", () => {
-  const upload = (bytes: Uint8Array, key = premiumKey()) =>
+  beforeEach(async () => {
+    premiumToken = await signInPremium();
+  });
+
+  const upload = (bytes: Uint8Array, key = premiumToken) =>
     request("POST", "/api/backup", {
       body: bytes as unknown as BodyInit,
       headers: {
@@ -473,7 +422,7 @@ describe("backups", () => {
     expect(status).toBe(200);
     expect(payload.value.backup.sizeBytes).toBe(4);
 
-    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    const list = await request("GET", "/api/backup", { headers: auth(premiumToken) });
     expect(list.payload.value.backups).toHaveLength(1);
     expect(list.payload.value.quota.usedBytes).toBe(4);
   });
@@ -485,7 +434,7 @@ describe("backups", () => {
     const { response } = await request(
       "GET",
       `/api/backup/${payload.value.backup.id}`,
-      { headers: auth(premiumKey()) },
+      { headers: auth(premiumToken) },
     );
 
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(ciphertext);
@@ -521,7 +470,7 @@ describe("backups", () => {
 
     expect(payload.value.pruned).toEqual([ids[0]]);
 
-    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    const list = await request("GET", "/api/backup", { headers: auth(premiumToken) });
     expect(list.payload.value.backups).toHaveLength(3);
     expect(list.payload.value.backups.map((b: { id: string }) => b.id)).not.toContain(
       ids[0],
@@ -545,24 +494,24 @@ describe("backups", () => {
     const removed = await request(
       "DELETE",
       `/api/backup/${payload.value.backup.id}`,
-      { headers: auth(premiumKey()) },
+      { headers: auth(premiumToken) },
     );
 
     expect(removed.status).toBe(200);
     expect(removed.payload.value.backups).toHaveLength(0);
-    expect(blobs.totalBytes).toBe(0);
+    expect(await blobs.list("backups/")).toHaveLength(0);
   });
 
   it("404s a backup that doesn't exist", async () => {
     const { status } = await request("GET", "/api/backup/nope", {
-      headers: auth(premiumKey()),
+      headers: auth(premiumToken),
     });
     expect(status).toBe(404);
   });
 
   it("rejects a traversal attempt in the id", async () => {
     const { status } = await request("DELETE", "/api/backup/..%2F..%2Fetc", {
-      headers: auth(premiumKey()),
+      headers: auth(premiumToken),
     });
     expect(status).toBe(400);
   });
@@ -572,15 +521,7 @@ describe("backups", () => {
   it("cannot reach another account's backup", async () => {
     const { payload } = await upload(new Uint8Array([1, 2, 3]));
 
-    const otherKey = issueLicense(
-      {
-        email: "other@example.com",
-        subscriptionId: "sub_other",
-        periodEnd: PERIOD_END,
-        issuedAt: NOW,
-      },
-      issuer.privateKeyPem,
-    ).key;
+    const otherKey = await signInPremium("other@example.com", "sub_other");
 
     const { status } = await request(
       "GET",
@@ -592,10 +533,15 @@ describe("backups", () => {
   });
 
   // The whole justification for us paying to store this.
-  it("stores nothing that identifies a person", async () => {
+  it("stores no identity alongside a backup", async () => {
     await upload(new Uint8Array([1, 2, 3]));
 
-    const entries = await blobs.list("");
+    // Accounts exist now, so the store legitimately holds an email in
+    // `accounts/`. What must stay true is that a *backup* — the bulk of what we
+    // hold, and the part that would hurt in a breach — carries no identity: not
+    // an address, not a subscription id, nothing but ciphertext under an opaque
+    // namespace.
+    const entries = await blobs.list("backups/");
     expect(entries).toHaveLength(1);
 
     const serialised = JSON.stringify(entries);
@@ -713,7 +659,17 @@ describe("backups on S3", () => {
     app = createCloudApp(ctx);
   });
 
-  const upload = (bytes: Uint8Array, key = premiumKey()) =>
+  beforeEach(async () => {
+    // Accounts live in the same store, which this suite swaps for S3, so the
+    // sign-in has to happen after that swap.
+    premiumToken = await signInPremium();
+  });
+
+  /** Bucket keys that are backups — account records share the bucket. */
+  const backupKeys = () =>
+    [...objects.keys()].filter((key) => key.includes("/backups/"));
+
+  const upload = (bytes: Uint8Array, key = premiumToken) =>
     request("POST", "/api/backup", {
       body: bytes as unknown as BodyInit,
       headers: {
@@ -728,14 +684,14 @@ describe("backups on S3", () => {
     const { status, payload } = await upload(ciphertext);
     expect(status).toBe(200);
 
-    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    const list = await request("GET", "/api/backup", { headers: auth(premiumToken) });
     expect(list.payload.value.backups).toHaveLength(1);
     expect(list.payload.value.quota.usedBytes).toBe(ciphertext.length);
 
     const { response } = await request(
       "GET",
       `/api/backup/${payload.value.backup.id}`,
-      { headers: auth(premiumKey()) },
+      { headers: auth(premiumToken) },
     );
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(ciphertext);
   });
@@ -745,7 +701,7 @@ describe("backups on S3", () => {
   it("preserves the manifest across a real S3 round trip", async () => {
     await upload(new Uint8Array([1, 2, 3]));
 
-    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    const list = await request("GET", "/api/backup", { headers: auth(premiumToken) });
     const backup = list.payload.value.backups[0];
 
     expect(backup.createdAt).toBe("2026-09-08T11:00:00.000Z");
@@ -761,24 +717,16 @@ describe("backups on S3", () => {
       await upload(new Uint8Array([i + 1]));
     }
 
-    const list = await request("GET", "/api/backup", { headers: auth(premiumKey()) });
+    const list = await request("GET", "/api/backup", { headers: auth(premiumToken) });
     expect(list.payload.value.backups).toHaveLength(2);
     // Pruned objects are really gone from the bucket, not just delisted.
-    expect(objects.size).toBe(2);
+    expect(backupKeys().length).toBe(2);
   });
 
   it("still keeps accounts apart", async () => {
     const { payload } = await upload(new Uint8Array([1, 2, 3]));
 
-    const other = issueLicense(
-      {
-        email: "other@example.com",
-        subscriptionId: "sub_other",
-        periodEnd: PERIOD_END,
-        issuedAt: NOW,
-      },
-      issuer.privateKeyPem,
-    ).key;
+    const other = await signInPremium("other@example.com", "sub_other");
 
     const cross = await request("GET", `/api/backup/${payload.value.backup.id}`, {
       headers: auth(other),
@@ -789,7 +737,7 @@ describe("backups on S3", () => {
   it("puts nothing identifying in the bucket, including the prefix", async () => {
     await upload(new Uint8Array([1, 2, 3]));
 
-    const keys = [...objects.keys()];
+    const keys = backupKeys();
     expect(keys).toHaveLength(1);
     expect(keys[0]).toMatch(/^store-validator\/backups\//);
     expect(keys[0]).not.toContain("buyer@example.com");
@@ -847,7 +795,9 @@ describe("accounts", () => {
     expect(code).toMatch(/^\d{6}$/);
     expect(verified.status).toBe(200);
     expect(verified.payload.value.deviceToken).toBeTruthy();
-    expect(verified.payload.value.entitlement).toContain(".");
+    expect(verified.payload.value.entitlement).toMatchObject({
+      email: "buyer@example.com",
+    });
   });
 
   it("never says whether an address is a customer", async () => {
@@ -896,7 +846,7 @@ describe("accounts", () => {
     const token = verified.payload.value.deviceToken;
 
     const before = await request("GET", "/api/account/entitlement", { headers: auth(token) });
-    expect(payloadOf(before.payload.value.entitlement).tier).toBe("free");
+    expect(before.payload.value.entitlement.tier).toBe("free");
 
     await webhook("checkout.session.completed", {
       subscription: "sub_123",
@@ -904,7 +854,7 @@ describe("accounts", () => {
     });
 
     const after = await request("GET", "/api/account/entitlement", { headers: auth(token) });
-    const entitlement = payloadOf(after.payload.value.entitlement);
+    const entitlement = after.payload.value.entitlement;
     expect(entitlement.tier).toBe("premium");
     expect(entitlement.status).toBe("active");
   });
@@ -927,7 +877,7 @@ describe("accounts", () => {
 
     const after = await request("GET", "/api/account/entitlement", { headers: auth(token) });
     expect(after.status).toBe(200);
-    const entitlement = payloadOf(after.payload.value.entitlement);
+    const entitlement = after.payload.value.entitlement;
     expect(entitlement.tier).toBe("premium");
     expect(entitlement.periodEnd?.slice(0, 4)).toBe("2028");
   });
@@ -944,7 +894,7 @@ describe("accounts", () => {
     await webhook("customer.subscription.deleted", { id: "sub_123" });
 
     const after = await request("GET", "/api/account/entitlement", { headers: auth(token) });
-    const entitlement = payloadOf(after.payload.value.entitlement);
+    const entitlement = after.payload.value.entitlement;
     expect(entitlement.status).toBe("canceled");
     // Still premium: they paid through PERIOD_END, which is in the future.
     expect(entitlement.tier).toBe("premium");
@@ -959,7 +909,7 @@ describe("accounts", () => {
     await webhook("customer.subscription.deleted", { id: "sub_123" });
 
     const { verified } = await signIn();
-    const entitlement = payloadOf(verified.payload.value.entitlement);
+    const entitlement = verified.payload.value.entitlement;
     expect(entitlement.tier).toBe("free");
   });
 
@@ -983,33 +933,27 @@ describe("accounts", () => {
     ).toBe(200);
   });
 
-  it("accepts a device token for cloud backup, reaching the same namespace as the key", async () => {
-    await webhook("checkout.session.completed", {
-      subscription: "sub_123",
-      customer_email: "buyer@example.com",
-    });
+  it("reaches the same backups from a second device", async () => {
+    const first = await signInPremium();
 
-    // Uploaded with a licence key, as a pre-accounts customer would have.
     const upload = await request("POST", "/api/backup", {
-      body: new Uint8Array([1, 2, 3]),
+      body: new Uint8Array([1, 2, 3]) as unknown as BodyInit,
       headers: {
-        ...auth(premiumKey()),
+        ...auth(first),
         [BACKUP_CREATED_AT_HEADER]: NOW.toISOString(),
       },
     });
     expect(upload.status).toBe(200);
 
-    // Listed with a device token: same backups, not an empty account.
-    const token = (await signIn()).verified.payload.value.deviceToken;
-    const listed = await request("GET", "/api/backup", { headers: auth(token) });
+    // A different device on the same account: the namespace comes from the
+    // subscription, not the token, so the backups are still there.
+    const second = await signInPremium();
+    expect(second).not.toBe(first);
+
+    const listed = await request("GET", "/api/backup", { headers: auth(second) });
     expect(listed.status).toBe(200);
     expect(listed.payload.value.backups).toHaveLength(1);
   });
+
 });
 
-/** Reads a signed entitlement's payload without verifying it. */
-function payloadOf(token: string): any {
-  return JSON.parse(
-    Buffer.from(token.split(".")[0]!, "base64url").toString("utf8"),
-  );
-}

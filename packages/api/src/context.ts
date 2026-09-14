@@ -33,8 +33,6 @@ export interface AppContext {
   pageSource?: PageSource;
   /** Injected so generated output and timestamps are deterministic in tests. */
   now?: () => Date;
-  /** Overrides the built-in licence public key. Set by tests. */
-  licensePublicKeyPem?: string;
   /**
    * Base URL of the hosted licensing/backup service. Overridable for staging
    * and, in tests, pointed at a fake.

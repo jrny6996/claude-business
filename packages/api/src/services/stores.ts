@@ -22,7 +22,7 @@ import {
 import { AI_PROVIDER_INFO } from "@repo/shared";
 import { nowOf, type AppContext } from "../context.js";
 import {
-  effectiveTier,
+  currentTier,
   getAiSettings,
   missingAiKeyCode,
   resolveAiCredentials,
@@ -302,11 +302,7 @@ async function resolveCheckout(
     return { config };
   }
 
-  const tier = effectiveTier(
-    ctx.data.users.ensureLocalUser().tier,
-    ctx.data.users.ensureLocalUser().premiumUntil,
-    nowOf(ctx),
-  );
+  const tier = currentTier(ctx);
 
   if (tier !== "premium") {
     if (config.checkout.provider === "stripe") {

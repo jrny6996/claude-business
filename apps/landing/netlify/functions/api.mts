@@ -78,15 +78,6 @@ function mailer(): Mailer {
   return new ResendMailer({ apiKey, from });
 }
 
-/**
- * Environment variables can't hold real newlines on most hosts, so a PEM is
- * pasted with `\n` escapes. Restoring them is the difference between a working
- * issuer and an opaque "unsupported key" error at signing time.
- */
-function pem(value: string | undefined): string {
-  return (value ?? "").replace(/\\n/g, "\n").trim();
-}
-
 function intFrom(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -114,8 +105,6 @@ function buildContext(): CloudContext {
       secretKey: env.STRIPE_SECRET_KEY || "not-configured",
     }),
     mailer: mailer(),
-    licensePrivateKeyPem: pem(env.DSV_LICENSE_PRIVATE_KEY),
-    licensePublicKeyPem: pem(env.DSV_LICENSE_PUBLIC_KEY),
     stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET ?? "",
   };
 }

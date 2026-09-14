@@ -9,7 +9,7 @@ import {
   revokeDeviceToken,
   SIGNIN_CODE_TTL_MINUTES,
 } from "../services/accounts.js";
-import { buildEntitlement, signEntitlement } from "../services/entitlement.js";
+import { buildEntitlement } from "../services/entitlement.js";
 import { signinCodeEmail } from "../services/mail.js";
 import { respondWithError } from "./errors.js";
 
@@ -69,13 +69,11 @@ export function accountRoutes(ctx: CloudContext): Hono {
         body.code,
       );
 
-      const entitlement = buildEntitlement(account, nowOf(ctx));
-
       return c.json({
         ok: true,
         value: {
           deviceToken,
-          entitlement: signEntitlement(entitlement, ctx.licensePrivateKeyPem),
+          entitlement: buildEntitlement(account, nowOf(ctx)),
         },
       });
     } catch (cause) {
@@ -99,13 +97,9 @@ export function accountRoutes(ctx: CloudContext): Hono {
         );
       }
 
-      const entitlement = buildEntitlement(account, nowOf(ctx));
-
       return c.json({
         ok: true,
-        value: {
-          entitlement: signEntitlement(entitlement, ctx.licensePrivateKeyPem),
-        },
+        value: { entitlement: buildEntitlement(account, nowOf(ctx)) },
       });
     } catch (cause) {
       return respondWithError(c, cause);

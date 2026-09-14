@@ -7,7 +7,6 @@ export const SECRET_NAMES = [
   "openrouter_api_key",
   "gemini_api_key",
   "stripe_secret_key",
-  "license_key",
   "device_token",
   "backup_encryption_key",
   "deploy_token_vercel",

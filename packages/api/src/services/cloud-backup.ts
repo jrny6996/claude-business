@@ -33,12 +33,9 @@ import { requirePremium } from "./settings.js";
  */
 export { BACKUP_DESTINATION_KEY, backupDestination } from "./settings.js";
 
-/** Where the cloud service lives. Overridable for staging and tests. */
-const DEFAULT_CLOUD_URL = "https://storevalidator.app";
+import { cloudBaseUrl } from "./cloud-url.js";
 
-export function cloudBaseUrl(ctx: AppContext): string {
-  return (ctx.cloudBaseUrl ?? DEFAULT_CLOUD_URL).replace(/\/$/, "");
-}
+export { cloudBaseUrl };
 
 /**
  * The user's backup encryption key, created on first use.
@@ -83,16 +80,16 @@ export function setRecoveryKey(ctx: AppContext, formatted: string): void {
   );
 }
 
-/** The licence, used as the credential for every hosted call. */
-function licenseKey(ctx: AppContext): string {
-  const key = ctx.data.settings.readSecret("license_key");
-  if (!key) {
+/** The device token, used as the credential for every hosted call. */
+function deviceToken(ctx: AppContext): string {
+  const token = ctx.data.settings.readSecret("device_token");
+  if (!token) {
     throw new AppError(
-      "PREMIUM_REQUIRED",
-      "Cloud backup needs an active premium licence. Add yours under Settings → Licence.",
+      "UNAUTHORIZED",
+      "Cloud backup needs you signed in. Sign in under Settings → Subscription.",
     );
   }
-  return key;
+  return token;
 }
 
 interface Envelope<T> {
@@ -118,7 +115,7 @@ async function cloudRequest<T>(
     response = await fetchImpl(`${cloudBaseUrl(ctx)}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${licenseKey(ctx)}`,
+        Authorization: `Bearer ${deviceToken(ctx)}`,
         ...headers,
       },
       ...(body === undefined ? {} : { body: body as unknown as BodyInit }),
@@ -246,7 +243,7 @@ export async function restoreCloudBackup(
   try {
     response = await fetchImpl(
       `${cloudBaseUrl(ctx)}/api/backup/${encodeURIComponent(id)}`,
-      { headers: { Authorization: `Bearer ${licenseKey(ctx)}` } },
+      { headers: { Authorization: `Bearer ${deviceToken(ctx)}` } },
     );
   } catch {
     throw new AppError(

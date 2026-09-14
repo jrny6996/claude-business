@@ -15,7 +15,9 @@ import {
 } from "@repo/shared";
 import { createAiClient, validateStripeKey } from "@repo/store-generator";
 import { LOCAL_USER_ID } from "@repo/db";
+import { entitlementTier } from "@repo/shared";
 import { nowOf, type AppContext } from "../context.js";
+import { readEntitlement } from "./account.js";
 
 export const BACKUP_ENABLED_KEY = "backup.enabled";
 export const BACKUP_DIR_KEY = "backup.dir";
@@ -253,31 +255,27 @@ export function setBackupPreferences(
 }
 
 /**
- * The single place entitlement is enforced.
+ * The single place the app decides whether something is premium.
  *
- * Licensing itself is intentionally minimal and local for now — see the note
- * in `licensing.ts`. Every premium gate routes through here so swapping in a
- * real check is one edit.
+ * Reads the cached entitlement, whose freshness is re-checked on every call, so
+ * a lapsed subscription downgrades on its own.
+ *
+ * **This is a product gate, not a security boundary.** Everything it protects
+ * runs on the user's machine, so it can be bypassed by anyone willing to edit a
+ * file. That is fine, and is why the features that cost *us* money — cloud
+ * backup — are gated again in the service against live account state, where the
+ * client's opinion is irrelevant.
  */
 export function requirePremium(ctx: AppContext, message: string): void {
-  const profile = ctx.data.users.ensureLocalUser(nowOf(ctx).toISOString());
-  if (effectiveTier(profile.tier, profile.premiumUntil, nowOf(ctx)) !== "premium") {
+  if (currentTier(ctx) !== "premium") {
     throw new AppError("PREMIUM_REQUIRED", message);
   }
 }
 
-/** A lapsed `premiumUntil` silently downgrades to free. */
-export function effectiveTier(
-  tier: Tier,
-  premiumUntil: string | null,
-  now: Date,
-): Tier {
-  if (tier !== "premium") return "free";
-  if (premiumUntil === null) return "premium";
-
-  const expiry = Date.parse(premiumUntil);
-  if (Number.isNaN(expiry)) return "free";
-  return expiry > now.getTime() ? "premium" : "free";
+/** The tier the app should behave as, right now. */
+export function currentTier(ctx: AppContext): Tier {
+  const { payload, reason } = readEntitlement(ctx);
+  return entitlementTier(reason ? null : (payload ?? null), nowOf(ctx));
 }
 
 export { LOCAL_USER_ID };

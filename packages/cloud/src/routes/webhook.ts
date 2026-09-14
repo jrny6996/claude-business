@@ -1,28 +1,22 @@
 import { Hono } from "hono";
 import { nowOf, type CloudContext } from "../context.js";
 import { applySubscriptionState, type SubscriptionStatus } from "../services/accounts.js";
-import { accountNamespace, issueLicense, licenseIdForSubscription } from "../services/issuer.js";
-import { licenseEmail } from "../services/mail.js";
+import { backupNamespaceForSubscription } from "../services/namespaces.js";
 import { verifyStripeSignature } from "../services/webhook-signature.js";
 
 /**
- * The Stripe webhook. The only thing that causes a licence to be minted.
+ * The Stripe webhook. The only thing that may change a subscription's state.
  *
- * Events handled, and why each one:
+ * Every handled event does the same thing: write what Stripe says onto the
+ * account. Nothing is minted and nothing is emailed — the app asks for its own
+ * entitlement, so there is no artefact to deliver.
  *
- * - `checkout.session.completed` — the first purchase. Issue and email.
- * - `invoice.paid` — a renewal. Re-issue with the new period end. Because the
- *   licence id is derived from the subscription id, the renewed key is the same
- *   identity with a later expiry, so the subscriber's cloud backups stay theirs.
- * - `customer.subscription.deleted` / `.updated` — the account's recorded
- *   status changes, but entitlement still runs to the period end. A subscriber
- *   who cancels keeps what they paid for and lapses on their own; revoking
- *   early would be taking back a period they have already bought.
- *
- * Every one of these also writes the subscription's state onto the account,
- * which is what the desktop app actually reads. The licence mail is kept
- * alongside it so customers who activated a key before accounts existed keep
- * working — that path can go once none are in circulation.
+ * - `checkout.session.completed` — the first purchase.
+ * - `invoice.paid` — a renewal, which moves the period end.
+ * - `customer.subscription.updated` / `.deleted` — status changes, including
+ *   the ones that end it. Recording these is what stops a cancelled subscriber
+ *   staying premium forever; entitlement still runs to the period end, because
+ *   revoking early takes back something already paid for.
  *
  * Anything else is acknowledged and ignored. Returning a non-2xx to Stripe for
  * an event we simply don't care about makes it retry for days.
@@ -112,44 +106,9 @@ async function handleEvent(ctx: CloudContext, event: StripeEvent): Promise<void>
     subscriptionId,
     status: normalizeStatus(subscription.status),
     periodEnd: new Date(subscription.current_period_end * 1000).toISOString(),
-    backupNamespace: accountNamespace(licenseIdForSubscription(subscriptionId)),
+    backupNamespace: backupNamespaceForSubscription(subscriptionId),
   });
 
-  // Only a purchase or a renewal mints a key. Gating on the event type rather
-  // than the subscription's status matters: a cancellation event can arrive
-  // while Stripe still reports the subscription active, and issuing there
-  // would email a fresh key to someone who just cancelled.
-  if (
-    event.type !== "checkout.session.completed" &&
-    event.type !== "invoice.paid"
-  ) {
-    return;
-  }
-
-  // A subscription that isn't paying doesn't get a key. `past_due` in
-  // particular arrives here on a failed renewal and must not extend anything.
-  if (subscription.status !== "active" && subscription.status !== "trialing") {
-    return;
-  }
-
-  const { key, payload } = issueLicense(
-    {
-      email,
-      subscriptionId,
-      periodEnd: subscription.current_period_end,
-      issuedAt: nowOf(ctx),
-    },
-    ctx.licensePrivateKeyPem,
-  );
-
-  try {
-    await ctx.mailer.send({ ...licenseEmail(key, payload.expiresAt), to: email });
-  } catch (cause) {
-    // Delivery failing must not fail the webhook: the payment succeeded, and
-    // the buyer can retrieve the key from the success page or by recovery.
-    // Retrying the whole event would re-issue a licence that already exists.
-    console.error(`[cloud] couldn't email licence to ${email}`, cause);
-  }
 }
 
 /** Stripe has more states than entitlement cares about; fold the rest in. */

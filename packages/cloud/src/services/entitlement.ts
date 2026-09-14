@@ -1,15 +1,12 @@
-import { createPrivateKey, sign } from "node:crypto";
-import {
-  encodeEntitlementPayload,
-  type EntitlementPayload,
-} from "@repo/shared";
+import type { Entitlement } from "@repo/shared";
 import { isPremiumNow, type AccountRecord } from "./accounts.js";
 
 /**
- * Minting the signed entitlement the desktop app trusts.
+ * What the desktop app is told it may do.
  *
- * Signed with the same issuer key as licences, so the app verifies both with
- * one public key and old licences keep working through the transition.
+ * Plain JSON. It is not signed, because every feature it gates runs on the
+ * user's own machine — the gate that matters is the server-side one in
+ * `auth.ts`, which checks live account state and cannot be talked out of it.
  */
 
 /**
@@ -27,11 +24,10 @@ export const ENTITLEMENT_REFRESH_HOURS = 24;
 export function buildEntitlement(
   account: AccountRecord,
   now: Date,
-): EntitlementPayload {
+): Entitlement {
   const premium = isPremiumNow(account, now);
 
   return {
-    v: 1,
     accountId: account.id,
     email: account.email,
     tier: premium ? "premium" : "free",
@@ -45,18 +41,4 @@ export function buildEntitlement(
     ).toISOString(),
     issuedAt: now.toISOString(),
   };
-}
-
-export function signEntitlement(
-  payload: EntitlementPayload,
-  privateKeyPem: string,
-): string {
-  const encoded = encodeEntitlementPayload(payload);
-  const signature = sign(
-    null,
-    new TextEncoder().encode(encoded),
-    createPrivateKey(privateKeyPem),
-  );
-
-  return `${encoded}.${signature.toString("base64url")}`;
 }

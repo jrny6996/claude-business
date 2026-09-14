@@ -4,7 +4,6 @@ import { accountRoutes } from "./routes/account.js";
 import { backupRoutes } from "./routes/backup.js";
 import { checkoutRoutes } from "./routes/checkout.js";
 import { respondWithError } from "./routes/errors.js";
-import { licenseRoutes } from "./routes/license.js";
 import { webhookRoutes } from "./routes/webhook.js";
 
 export * from "./context.js";
@@ -13,7 +12,7 @@ export * from "./storage/s3.js";
 export * from "./storage/sigv4.js";
 export * from "./services/stripe.js";
 export * from "./services/mail.js";
-export * from "./services/issuer.js";
+export * from "./services/namespaces.js";
 export * from "./services/auth.js";
 export * from "./services/accounts.js";
 export * from "./services/entitlement.js";
@@ -32,7 +31,7 @@ export { statusFor } from "./routes/errors.js";
  * costs us money, and it is deliberately small:
  *
  * - It never touches storefront traffic, AI inference, or a user's Stripe key.
- * - It holds the licence signing key, which exists nowhere else.
+ * - It holds the account records, and is where premium is actually enforced.
  * - It stores backups it cannot read, because the desktop app encrypts them
  *   first with a key we never receive.
  *
@@ -46,7 +45,6 @@ export function createCloudApp(ctx: CloudContext): Hono {
 
   app.route("/api/account", accountRoutes(ctx));
   app.route("/api/checkout", checkoutRoutes(ctx));
-  app.route("/api/license", licenseRoutes(ctx));
   app.route("/api/backup", backupRoutes(ctx));
   app.route("/api/stripe/webhook", webhookRoutes(ctx));
 
@@ -60,7 +58,6 @@ export function createCloudApp(ctx: CloudContext): Hono {
         configured: {
           stripe: Boolean(ctx.config.premiumPriceId),
           webhook: Boolean(ctx.stripeWebhookSecret),
-          issuer: Boolean(ctx.licensePrivateKeyPem),
         },
       },
     }),
