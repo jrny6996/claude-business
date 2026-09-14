@@ -1422,3 +1422,76 @@ describe("account", () => {
     expect((out.payload.value as { tier: string }).tier).toBe("free");
   });
 });
+
+/**
+ * Applying AI copy to stores that already exist.
+ *
+ * Generation offers this per store at creation time only, so a user who added
+ * a key afterwards — or switched provider — had no way to apply it to what
+ * they already had.
+ */
+describe("bulk AI copy", () => {
+  const baseBody = {
+    url: "https://www.aliexpress.com/item/1005006.html",
+    config: { storeName: "Copy Co" },
+  };
+
+  it("400s with the selected provider's code when no key is set", async () => {
+    await harness.request("POST", "/api/stores", baseBody);
+
+    const { status, payload } = await harness.request("POST", "/api/stores/ai-copy");
+
+    // 400, not 500: the renderer routes the user to Settings on this code, and
+    // a 500 would read as the app being broken.
+    expect(status).toBe(400);
+    expect(payload.error.code).toBe("MISSING_OPENROUTER_KEY");
+  });
+
+  it("names the selected provider, not whichever key happens to exist", async () => {
+    await harness.request("POST", "/api/stores", baseBody);
+    harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-abcd1234");
+    await harness.request("PUT", "/api/settings/ai", { provider: "gemini" });
+
+    const { status, payload } = await harness.request("POST", "/api/stores/ai-copy");
+
+    expect(status).toBe(400);
+    expect(payload.error.code).toBe("MISSING_GEMINI_KEY");
+  });
+
+  it("rewrites every store and rebuilds the generated site", async () => {
+    const created = await harness.request("POST", "/api/stores", baseBody);
+    const { store } = created.payload.value as { store: { outputDir: string } };
+    harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-abcd1234");
+
+    const { status, payload } = await harness.request("POST", "/api/stores/ai-copy");
+    const result = payload.value as {
+      rewritten: number;
+      failed: number;
+      provider: string;
+    };
+
+    expect(status).toBe(200);
+    expect(result).toMatchObject({ rewritten: 1, failed: 0, provider: "openrouter" });
+
+    const data = JSON.parse(
+      readFileSync(join(store.outputDir, "src/data/store.json"), "utf8"),
+    );
+    expect(data.product.description).toBe("Rewritten copy.");
+  });
+
+  it("only touches the stores it was given", async () => {
+    const first = await harness.request("POST", "/api/stores", baseBody);
+    await harness.request("POST", "/api/stores", {
+      ...baseBody,
+      config: { storeName: "Untouched Co" },
+    });
+    const { store } = first.payload.value as { store: { id: string } };
+    harness.data.settings.writeSecret("openrouter_api_key", "sk-or-v1-abcd1234");
+
+    const { payload } = await harness.request("POST", "/api/stores/ai-copy", {
+      storeIds: [store.id],
+    });
+
+    expect(payload.value).toMatchObject({ rewritten: 1, failed: 0 });
+  });
+});

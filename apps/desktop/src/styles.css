@@ -179,6 +179,14 @@ body,
   margin: 0;
 }
 
+/* Keeps a count and an action together on the right of the rule, so the
+   heading stays flush left and the count doesn't strand itself in the middle. */
+.section-head-actions {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
 /* A quieter divider for grouping inside a screen. */
 .subhead {
   font-size: 11px;

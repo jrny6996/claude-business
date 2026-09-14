@@ -108,6 +108,21 @@ export interface AccountState {
   staleReason?: string;
 }
 
+/** One store's outcome from the bulk AI copy rewrite. */
+export interface CopyRewriteOutcome {
+  storeId: string;
+  storeName: string;
+  status: "rewritten" | "failed";
+  message?: string;
+}
+
+export interface CopyRewriteResult {
+  rewritten: number;
+  failed: number;
+  provider: AiProvider;
+  results: CopyRewriteOutcome[];
+}
+
 export interface DeployInstructions {
   provider: string;
   projectDir: string;
@@ -142,6 +157,7 @@ export const api = {
       ...(destination ? { destination } : {}),
     }),
   previewProduct: (url: string) => call("POST", "/api/stores/preview", { url }),
+  rewriteCopy: () => call<CopyRewriteResult>("POST", "/api/stores/ai-copy"),
   listStores: () => call<Store[]>("GET", "/api/stores"),
   createStore: (payload: unknown) =>
     call<CreateStoreResult>("POST", "/api/stores", payload),

@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Store } from "@repo/shared";
-import { ApiError, api } from "../bridge.js";
+import { ApiError, api, type CopyRewriteResult } from "../bridge.js";
 import { Banner } from "../components/Banner.js";
+import { useToast } from "../components/Toast.js";
 import { StoreDetail } from "./StoreDetail.js";
+
+/** The codes that mean "the user has no usable AI key", whichever provider. */
+const MISSING_KEY_CODES = [
+  "MISSING_OPENROUTER_KEY",
+  "MISSING_GEMINI_KEY",
+  "MISSING_AI_KEY",
+];
 
 /**
  * The generated stores, as a list you can scan.
@@ -16,14 +24,20 @@ export function Stores({
   reloadKey,
   openStoreId,
   onOpenStore,
+  onNeedsAiKey,
 }: {
   reloadKey: number;
   openStoreId: string | null;
   onOpenStore: (storeId: string | null) => void;
+  /** Called when an AI action can't run because no key is set up. */
+  onNeedsAiKey: () => void;
 }) {
+  const toast = useToast();
   const [stores, setStores] = useState<Store[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewrite, setRewrite] = useState<CopyRewriteResult | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -39,6 +53,39 @@ export function Stores({
   useEffect(() => {
     void load();
   }, [load, reloadKey]);
+
+  /**
+   * Rewrites every store's copy with the user's own provider.
+   *
+   * With no key configured this is a dead end rather than an error to read, so
+   * the user is taken to Settings — the only place that can fix it — instead of
+   * being told to go there.
+   */
+  const rewriteAll = async () => {
+    setRewriting(true);
+    setError(null);
+    try {
+      const result = await api.rewriteCopy();
+      setRewrite(result);
+      toast.show(
+        result.failed === 0
+          ? `Rewrote copy for ${result.rewritten} ${result.rewritten === 1 ? "store" : "stores"}.`
+          : `Rewrote ${result.rewritten}, ${result.failed} failed.`,
+        result.failed === 0 ? "default" : "error",
+      );
+      await load();
+    } catch (cause) {
+      const failure = cause as ApiError;
+      if (MISSING_KEY_CODES.includes(failure.code)) {
+        toast.show(failure.message, "error");
+        onNeedsAiKey();
+        return;
+      }
+      setError(failure);
+    } finally {
+      setRewriting(false);
+    }
+  };
 
   const open = openStoreId
     ? (stores.find((store) => store.id === openStoreId) ?? null)
@@ -58,12 +105,38 @@ export function Stores({
     <div className="stack">
       <div className="section-head">
         <h2>Stores</h2>
-        <span className="text-muted">
-          {stores.length} generated
-        </span>
+        <div className="section-head-actions">
+          <span className="text-muted">{stores.length} generated</span>
+          {stores.length > 0 && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => void rewriteAll()}
+              disabled={rewriting}
+            >
+              {rewriting ? "Rewriting…" : "Rewrite copy with AI"}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <Banner title={error.message} />}
+
+      {rewrite && rewrite.failed > 0 && (
+        <Banner
+          title={`${rewrite.failed} of ${rewrite.results.length} stores kept their existing copy.`}
+        >
+          <ul>
+            {rewrite.results
+              .filter((entry) => entry.status === "failed")
+              .map((entry) => (
+                <li key={entry.storeId}>
+                  <strong>{entry.storeName}</strong> — {entry.message}
+                </li>
+              ))}
+          </ul>
+        </Banner>
+      )}
 
       {loading ? (
         <div className="spinner">Loading…</div>

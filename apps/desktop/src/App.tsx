@@ -76,6 +76,7 @@ export function App() {
                 reloadKey={reloadKey}
                 openStoreId={openStoreId}
                 onOpenStore={setOpenStoreId}
+                onNeedsAiKey={() => setTab("settings")}
               />
             )}
             {tab === "settings" && <Settings />}

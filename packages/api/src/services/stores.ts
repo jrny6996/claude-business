@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   AppError,
   StoreConfigSchema,
+  type AiProvider,
   ThemeSchema,
   type NormalizedProduct,
   type Store,
@@ -500,4 +501,105 @@ async function bundleAssets(
     );
     return product;
   }
+}
+
+export interface CopyRewriteOutcome {
+  storeId: string;
+  storeName: string;
+  /** "rewritten" changed the store; "failed" left it exactly as it was. */
+  status: "rewritten" | "failed";
+  message?: string;
+}
+
+export interface CopyRewriteResult {
+  rewritten: number;
+  failed: number;
+  provider: AiProvider;
+  results: CopyRewriteOutcome[];
+}
+
+/**
+ * Rewrites the product copy of existing stores with the user's own AI provider.
+ *
+ * Generation already offers this per store, but only at creation time — a user
+ * who added their key afterwards, or switched provider, had no way to apply it
+ * to stores they already had short of regenerating each one by hand.
+ *
+ * A missing key throws here rather than warning, which is the opposite of the
+ * generation path and deliberate: this action has no other purpose, so there is
+ * no half-result worth returning, and the UI sends the user to Settings on this
+ * exact code. Generation warns because the store is still worth having.
+ *
+ * Per-store failures are collected, never thrown: one provider hiccup on the
+ * fourth of ten stores must not lose the three rewrites that already landed,
+ * and a store that fails keeps its previous copy untouched.
+ */
+export async function rewriteStoreCopy(
+  ctx: AppContext,
+  storeIds?: string[],
+): Promise<CopyRewriteResult> {
+  const { provider } = getAiSettings(ctx);
+  const credentials = resolveAiCredentials(ctx);
+  if (!credentials) {
+    throw new AppError(
+      missingAiKeyCode(provider),
+      `Add your ${AI_PROVIDER_INFO[provider].label} key in Settings to rewrite store copy.`,
+    );
+  }
+
+  const client = await createAiClient({
+    provider: credentials.provider,
+    apiKey: credentials.apiKey,
+    model: credentials.model,
+    ...(ctx.fetchImpl ? { fetchImpl: ctx.fetchImpl } : {}),
+  });
+
+  const all = listStores(ctx);
+  const targets = storeIds
+    ? all.filter((store) => storeIds.includes(store.id))
+    : all;
+
+  const results: CopyRewriteOutcome[] = [];
+
+  for (const store of targets) {
+    try {
+      const rewritten = await rewriteProductCopy(store.product, client);
+      const product: NormalizedProduct = {
+        ...store.product,
+        description: rewritten.description,
+        highlights:
+          rewritten.highlights.length > 0
+            ? rewritten.highlights
+            : store.product.highlights,
+      };
+
+      // Only rebuild a store that has been generated somewhere. One that
+      // hasn't still gets the new copy, and picks it up when it is generated.
+      const now = nowOf(ctx);
+      if (store.outputDir) {
+        await generateAndWriteSite(store.config, product, store.outputDir, { now });
+      }
+      ctx.data.stores.update(store.id, { product }, now.toISOString());
+
+      results.push({
+        storeId: store.id,
+        storeName: store.config.storeName,
+        status: "rewritten",
+      });
+    } catch (cause) {
+      results.push({
+        storeId: store.id,
+        storeName: store.config.storeName,
+        status: "failed",
+        message: warningFor(cause, "The rewrite failed.").message,
+      });
+    }
+  }
+
+  return {
+    provider: credentials.provider,
+    rewritten: results.filter((r) => r.status === "rewritten").length,
+    failed: results.filter((r) => r.status === "failed").length,
+    results,
+  };
 }

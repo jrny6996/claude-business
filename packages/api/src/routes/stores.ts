@@ -8,6 +8,7 @@ import {
   listStores,
   previewProduct,
   regenerateStore,
+  rewriteStoreCopy,
   updateStoreTheme,
 } from "../services/stores.js";
 import { respondWithError } from "./errors.js";
@@ -24,6 +25,8 @@ const CreateBody = z.object({
 });
 
 const RegenerateBody = z.object({ config: z.unknown().optional() });
+/** No `storeIds` means every store — the bulk action the Stores screen offers. */
+const AiCopyBody = z.object({ storeIds: z.array(z.string()).optional() });
 const ThemeBody = z.object({ theme: z.unknown() });
 
 export function storeRoutes(ctx: AppContext): Hono {
@@ -52,6 +55,18 @@ export function storeRoutes(ctx: AppContext): Hono {
     try {
       const body = CreateBody.parse(await c.req.json());
       return c.json({ ok: true, value: await createStore(ctx, body) });
+    } catch (cause) {
+      return respondWithError(c, cause);
+    }
+  });
+
+  app.post("/ai-copy", async (c) => {
+    try {
+      const body = AiCopyBody.parse(await c.req.json().catch(() => ({})));
+      return c.json({
+        ok: true,
+        value: await rewriteStoreCopy(ctx, body.storeIds),
+      });
     } catch (cause) {
       return respondWithError(c, cause);
     }
